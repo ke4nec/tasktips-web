@@ -25,6 +25,7 @@
     "@milkdown/vue": "^7.22.1",
     "dexie": "^4.4.6",
     "fake-indexeddb": "^6.2.5",
+    "jszip": "^3.10.2",
     "pinia": "^4.0.3",
     "vue": "^3.5.41",
     "vue-router": "^4.5.0"

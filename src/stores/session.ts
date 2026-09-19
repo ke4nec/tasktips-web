@@ -92,8 +92,17 @@ export const useSessionStore = defineStore("session", () => {
   }
 
   // 启动恢复：先刷新会话再读身份（§8.3），失败即未登录态。
+  // 成功后补注册本机设备（upsert，刷新页面不重复创建 §8.1）。
   async function restoreSession(): Promise<boolean> {
-    return refreshAccess();
+    const ok = await refreshAccess();
+    if (ok && account.value && deviceId.value) {
+      try {
+        await api.registerDevice({ deviceId: deviceId.value, name: browserName() });
+      } catch {
+        // 设备注册失败不阻断进入工作台
+      }
+    }
+    return ok;
   }
 
   function clearAuth() {

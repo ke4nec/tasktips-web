@@ -1,7 +1,10 @@
 import type {
+  HistoryEntry,
   ObjectEnvelope,
   PushItemResult,
   PushRequest,
+  RestoreInfo,
+  SnapshotInfo,
   SyncServerPort,
   Tombstone,
 } from "@/sync/protocol";
@@ -23,6 +26,24 @@ interface ProjectState {
   tombstones: Map<string, ServerTombstone>;
   order: string[];
   requests: Map<string, PushItemResult[]>;
+  sequence: number;
+  history: HistoryEntry[];
+  snapshots: SnapshotRecord[];
+  restores: RestoreRecord[];
+}
+
+interface SnapshotRecord extends SnapshotInfo {
+  objects: [string, ServerObject][];
+  tombstones: [string, ServerTombstone][];
+  order: string[];
+  generation: number;
+}
+
+interface RestoreRecord extends RestoreInfo {
+  snapshotId?: string;
+  sequence?: number;
+  polls: number;
+  cancelReason?: string;
 }
 
 const PAGE_LIMIT_MAX = 500;
@@ -48,10 +69,34 @@ export class MockSyncServer implements SyncServerPort {
         tombstones: new Map(),
         order: [],
         requests: new Map(),
+        sequence: 0,
+        history: [],
+        snapshots: [],
+        restores: [],
       };
       this.projects.set(projectId, state);
     }
     return state;
+  }
+
+  private record(
+    state: ProjectState,
+    kind: HistoryEntry["kind"],
+    id: string,
+    revision: number,
+    hash: string | undefined,
+    deleted: boolean,
+  ) {
+    state.sequence += 1;
+    state.history.push({
+      sequence: state.sequence,
+      kind,
+      id,
+      revision,
+      hash,
+      deleted,
+      at: new Date().toISOString(),
+    });
   }
 
   private maybeFail() {
@@ -149,6 +194,7 @@ export class MockSyncServer implements SyncServerPort {
       state.objects.set(key, { revision, hash: item.hash });
       state.tombstones.delete(key);
       if (!state.order.includes(key)) state.order.push(key);
+      this.record(state, item.kind, item.id, revision, item.hash, false);
       results.push({
         kind: item.kind,
         id: item.id,
@@ -174,6 +220,7 @@ export class MockSyncServer implements SyncServerPort {
       state.objects.delete(key);
       state.tombstones.set(key, { revision, deletedAt: item.deletedAt });
       if (!state.order.includes(key)) state.order.push(key);
+      this.record(state, item.kind, item.id, revision, undefined, true);
       results.push({ kind: item.kind, id: item.id, status: "applied", revision });
     }
     state.requests.set(
@@ -207,6 +254,7 @@ export class MockSyncServer implements SyncServerPort {
     const revision = (current?.revision ?? 0) + 1;
     state.objects.set(key, { revision, hash });
     if (!state.order.includes(key)) state.order.push(key);
+    this.record(state, kind, id, revision, hash, false);
   }
 
   /** 模拟远端删除。 */
@@ -218,11 +266,153 @@ export class MockSyncServer implements SyncServerPort {
     state.objects.delete(key);
     state.tombstones.set(key, { revision, deletedAt: new Date().toISOString() });
     if (!state.order.includes(key)) state.order.push(key);
+    this.record(state, kind, id, revision, undefined, true);
   }
 
   /** 模拟云端恢复：代次变化，旧游标与请求上下文废弃（§9.2）。 */
   bumpGeneration(projectId: string) {
     this.stateOf(projectId).generation += 1;
+  }
+
+  // ---- 历史（§10.1）：分页只加载信封，payload 按需下载 ----
+
+  async history(projectId: string, afterSequence: number | null, limit: number) {
+    const state = this.stateOf(projectId);
+    const entries = state.history
+      .filter((entry) => (afterSequence ?? 0) < entry.sequence)
+      .slice(0, limit);
+    const last = entries[entries.length - 1];
+    return {
+      entries,
+      nextSequence: last && last.sequence < state.sequence ? last.sequence : null,
+    };
+  }
+
+  async objectHistory(
+    projectId: string,
+    kind: ObjectEnvelope["kind"],
+    id: string,
+    afterSequence: number | null,
+    limit: number,
+  ) {
+    const state = this.stateOf(projectId);
+    const entries = state.history
+      .filter(
+        (entry) => entry.kind === kind && entry.id === id && (afterSequence ?? 0) < entry.sequence,
+      )
+      .slice(0, limit);
+    const scoped = state.history.filter((entry) => entry.kind === kind && entry.id === id);
+    const last = entries[entries.length - 1];
+    return {
+      entries,
+      nextSequence:
+        last && scoped.length > 0 && last.sequence < scoped[scoped.length - 1].sequence
+          ? last.sequence
+          : null,
+    };
+  }
+
+  // ---- 快照与恢复任务（§10.1） ----
+
+  async listSnapshots(projectId: string): Promise<SnapshotInfo[]> {
+    const state = this.stateOf(projectId);
+    return [...state.snapshots]
+      .reverse()
+      .map(
+        ({
+          objects: _objects,
+          tombstones: _tombstones,
+          order: _order,
+          generation: _generation,
+          ...info
+        }) => info,
+      );
+  }
+
+  async createSnapshot(projectId: string, label: string): Promise<SnapshotInfo> {
+    const state = this.stateOf(projectId);
+    const snapshot: SnapshotRecord = {
+      id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      projectId,
+      changeSequence: state.sequence,
+      status: "ready",
+      label: label || "手动快照",
+      createdAt: new Date().toISOString(),
+      objects: [...state.objects.entries()],
+      tombstones: [...state.tombstones.entries()],
+      order: [...state.order],
+      generation: state.generation,
+    };
+    state.snapshots.push(snapshot);
+    const { objects: _o, tombstones: _t, order: _r, generation: _g, ...info } = snapshot;
+    return info;
+  }
+
+  async createRestore(
+    projectId: string,
+    input: { snapshotId?: string; sequence?: number; reason: string },
+  ): Promise<RestoreInfo> {
+    const state = this.stateOf(projectId);
+    const reason = input.reason.trim();
+    if (reason.length < 1 || [...reason].length > 512) {
+      throw new SyncError("VALIDATION_ERROR", "恢复原因必填，1–512 字符。");
+    }
+    const snapshot = input.snapshotId
+      ? state.snapshots.find((item) => item.id === input.snapshotId)
+      : undefined;
+    if (input.snapshotId && !snapshot) {
+      throw new SyncError("NOT_FOUND", "快照不存在。");
+    }
+    if (snapshot && snapshot.status !== "ready") {
+      throw new SyncError("SERVER_ERROR", "快照不可恢复。");
+    }
+    const restore: RestoreRecord = {
+      id: `restore-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      status: "pending",
+      reason,
+      createdAt: new Date().toISOString(),
+      snapshotId: input.snapshotId,
+      sequence: input.sequence,
+      polls: 0,
+    };
+    state.restores.push(restore);
+    const { snapshotId: _s, sequence: _q, polls: _p, cancelReason: _c, ...info } = restore;
+    return info;
+  }
+
+  async getRestore(projectId: string, id: string): Promise<RestoreInfo> {
+    const state = this.stateOf(projectId);
+    const restore = state.restores.find((item) => item.id === id);
+    if (!restore) throw new SyncError("NOT_FOUND", "恢复任务不存在。");
+    if (restore.status === "pending") {
+      restore.polls += 1;
+      if (restore.polls >= 2) {
+        // 两次轮询后完成：整个项目恢复到快照并推进代次（§10.1）。
+        const snapshot = state.snapshots.find((item) => item.id === restore.snapshotId);
+        if (snapshot) {
+          state.objects = new Map(snapshot.objects);
+          state.tombstones = new Map(snapshot.tombstones);
+          state.order = [...snapshot.order];
+        }
+        state.generation += 1;
+        restore.status = "ready";
+      }
+    }
+    const { snapshotId: _s, sequence: _q, polls: _p, cancelReason: _c, ...info } = restore;
+    return info;
+  }
+
+  async cancelRestore(projectId: string, id: string, reason: string): Promise<RestoreInfo> {
+    const state = this.stateOf(projectId);
+    const restore = state.restores.find((item) => item.id === id);
+    if (!restore) throw new SyncError("NOT_FOUND", "恢复任务不存在。");
+    if (!reason.trim()) {
+      throw new SyncError("VALIDATION_ERROR", "取消原因必填。");
+    }
+    if (restore.status === "pending") restore.status = "cancelled";
+    restore.cancelReason = reason.trim();
+    const { snapshotId: _s, sequence: _q, polls: _p, cancelReason: _c, ...info } = restore;
+    return info;
   }
 
   inspect(projectId: string): { generation: number; objects: number; requests: number } {

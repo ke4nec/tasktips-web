@@ -1,5 +1,29 @@
-import type { ActivateInput, ApiPort, RegisterDeviceInput } from "./port";
+import type { ActivateInput, ApiPort, ChangePasswordInput, RegisterDeviceInput } from "./port";
 import { ApiError, type Account, type AuthResult, type Device, type Project } from "./types";
+
+const APP_VERSION = "0.1.0";
+
+interface ContractDevice {
+  id: string;
+  displayName: string;
+  platform: string;
+  appVersion?: string;
+  createdAt?: string;
+  lastSeenAt?: string | null;
+  revokedAt?: string | null;
+}
+
+function toDevice(data: ContractDevice): Device {
+  return {
+    id: data.id,
+    name: data.displayName,
+    platform: data.platform,
+    appVersion: data.appVersion,
+    createdAt: data.createdAt,
+    lastSeenAt: data.lastSeenAt,
+    revokedAt: data.revokedAt,
+  };
+}
 
 // 真实 HTTP 实现：业务接口直调现有云端 API；4 个 Web 会话 Cookie 接口
 // （§8.2）在 tasktips-cloud 落地前显式抛 WEB_AUTH_NOT_SUPPORTED，不静默降级。
@@ -86,14 +110,43 @@ export class HttpApi implements ApiPort {
   }
 
   async registerDevice(input: RegisterDeviceInput): Promise<Device> {
-    const data = await this.request<{ id: string; name: string; platform: string }>(
-      "/api/v1/devices/register",
-      {
-        method: "POST",
-        body: JSON.stringify({ deviceId: input.deviceId, name: input.name, platform: "web" }),
-      },
-    );
-    return { id: data.id, name: data.name, platform: data.platform };
+    const data = await this.request<ContractDevice>("/api/v1/devices/register", {
+      method: "POST",
+      body: JSON.stringify({
+        deviceId: input.deviceId,
+        displayName: input.name,
+        platform: "web",
+        appVersion: APP_VERSION,
+      }),
+    });
+    return toDevice(data);
+  }
+
+  async listDevices(): Promise<Device[]> {
+    const data = await this.request<{ items: ContractDevice[] }>("/api/v1/devices");
+    return data.items.map(toDevice);
+  }
+
+  async renameDevice(id: string, name: string): Promise<Device> {
+    const data = await this.request<ContractDevice>(`/api/v1/devices/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ displayName: name }),
+    });
+    return toDevice(data);
+  }
+
+  async revokeDevice(id: string): Promise<void> {
+    await this.request(`/api/v1/devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+  }
+
+  async changePassword(input: ChangePasswordInput): Promise<void> {
+    await this.request("/api/v1/me/password", {
+      method: "PATCH",
+      body: JSON.stringify({
+        currentPassword: input.currentPassword,
+        newPassword: input.newPassword,
+      }),
+    });
   }
 
   async listProjects(): Promise<Project[]> {

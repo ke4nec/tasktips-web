@@ -1266,4 +1266,25 @@ export class DexieContent implements ContentPort {
       }
     });
   }
+
+  async clearProjectData(projectId: string): Promise<void> {
+    const scope = this.scopeOf(projectId);
+    await this.tx(async () => {
+      for (const table of [
+        this.meta,
+        this.todos,
+        this.categories,
+        this.tags,
+        this.batches,
+        this.customOrders,
+        this.images,
+        this.recoveries,
+      ]) {
+        const keys = await table
+          .filter((row) => typeof row.scope === "string" && row.scope === scope)
+          .primaryKeys();
+        if (keys.length > 0) await table.bulkDelete(keys);
+      }
+    });
+  }
 }

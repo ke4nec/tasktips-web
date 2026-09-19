@@ -179,13 +179,16 @@ export class SyncEngine {
     error: unknown,
     manual: boolean,
   ): Promise<string> {
-    if (error instanceof SyncError && error.code === "GENERATION_MISMATCH") {
+    if (
+      error instanceof SyncError &&
+      (error.code === "GENERATION_MISMATCH" || error.code === "CURSOR_INVALID")
+    ) {
       // 停止旧请求，保存本机内容，废弃旧游标与请求上下文并重新 bootstrap（§9.2）。
       state.bootstrapped = false;
       state.cursor = null;
       state.generation = 0;
       state.pending = null;
-      state.lastError = "GENERATION_MISMATCH";
+      state.lastError = error.code;
       await this.saveState();
       if (!manual) {
         // 自动流程内直接重初始化一次；手动流程由调用方决定。
@@ -905,6 +908,9 @@ export class SyncEngine {
 
 const CHANNEL = "tasktips-sync";
 let channel: BroadcastChannel | null = null;
+// 同标签页直投：BroadcastChannel 不投递给发送者自身，单页内的
+// 同步完成通知走本地订阅；跨标签页仍走 channel。
+const localListeners = new Set<(scope: string) => void>();
 
 function getChannel(): BroadcastChannel | null {
   if (typeof BroadcastChannel === "undefined") return null;
@@ -913,6 +919,13 @@ function getChannel(): BroadcastChannel | null {
 }
 
 export function notifyScope(scope: string) {
+  for (const listener of [...localListeners]) {
+    try {
+      listener(scope);
+    } catch {
+      // 忽略单个监听失败
+    }
+  }
   try {
     getChannel()?.postMessage({ type: "invalidated", scope });
   } catch {
@@ -921,13 +934,21 @@ export function notifyScope(scope: string) {
 }
 
 export function subscribeInvalidation(listener: (scope: string) => void): () => void {
+  localListeners.add(listener);
   const target = getChannel();
-  if (!target) return () => undefined;
+  if (!target) {
+    return () => {
+      localListeners.delete(listener);
+    };
+  }
   const handler = (event: MessageEvent) => {
     if (event.data?.type === "invalidated" && typeof event.data.scope === "string") {
       listener(event.data.scope as string);
     }
   };
   target.addEventListener("message", handler);
-  return () => target.removeEventListener("message", handler);
+  return () => {
+    localListeners.delete(listener);
+    target.removeEventListener("message", handler);
+  };
 }

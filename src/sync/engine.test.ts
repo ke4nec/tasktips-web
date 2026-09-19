@@ -243,6 +243,23 @@ describe("同步引擎", () => {
     }
   });
 
+  it("游标失效自动重新初始化", async () => {
+    const { content, server, engine } = setup();
+    try {
+      await engine.syncNow({ manual: true });
+      const state = await engine.getState();
+      // 模拟服务端日志裁剪后旧游标失效
+      state.cursor = "9999";
+      await content.putSyncState("demo", JSON.stringify(state));
+      const status = await engine.syncNow();
+      expect(status).toBe("synced");
+      expect((await engine.getState()).bootstrapped).toBe(true);
+      void server;
+    } finally {
+      await content.deleteDatabase();
+    }
+  });
+
   it("generation 变化自动重新初始化", async () => {
     const { content, server, engine } = setup();
     try {

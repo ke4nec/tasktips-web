@@ -66,6 +66,8 @@ export type SyncErrorCode =
   | "SCHEMA_UNSUPPORTED"
   | "HASH_MISMATCH"
   | "IDEMPOTENCY_CONFLICT"
+  | "NOT_FOUND"
+  | "VALIDATION_ERROR"
   | "SERVER_ERROR";
 
 export class SyncError extends Error {
@@ -99,6 +101,55 @@ export interface SyncServerPort {
   hasPayload(hash: string): Promise<boolean>;
   putPayload(hash: string, data: string | ArrayBuffer): Promise<void>;
   getPayload(hash: string): Promise<string | ArrayBuffer | null>;
+  history(
+    projectId: string,
+    afterSequence: number | null,
+    limit: number,
+  ): Promise<{ entries: HistoryEntry[]; nextSequence: number | null }>;
+  objectHistory(
+    projectId: string,
+    kind: SyncKind,
+    id: string,
+    afterSequence: number | null,
+    limit: number,
+  ): Promise<{ entries: HistoryEntry[]; nextSequence: number | null }>;
+  listSnapshots(projectId: string): Promise<SnapshotInfo[]>;
+  createSnapshot(projectId: string, label: string): Promise<SnapshotInfo>;
+  createRestore(
+    projectId: string,
+    input: { snapshotId?: string; sequence?: number; reason: string },
+  ): Promise<RestoreInfo>;
+  getRestore(projectId: string, id: string): Promise<RestoreInfo>;
+  cancelRestore(projectId: string, id: string, reason: string): Promise<RestoreInfo>;
+}
+
+// 项目历史条目：只加载信封，点击记录才下载 payload（§10.1）。
+export interface HistoryEntry {
+  sequence: number;
+  kind: SyncKind;
+  id: string;
+  revision: number;
+  hash?: string;
+  deleted: boolean;
+  at: string;
+}
+
+export interface SnapshotInfo {
+  id: string;
+  projectId: string;
+  changeSequence: number;
+  status: "ready" | "creating";
+  label: string;
+  createdAt: string;
+}
+
+export type RestoreStatus = "pending" | "ready" | "cancelled" | "failed";
+
+export interface RestoreInfo {
+  id: string;
+  status: RestoreStatus;
+  reason: string;
+  createdAt: string;
 }
 
 export function isTombstone(change: ObjectEnvelope | Tombstone): change is Tombstone {

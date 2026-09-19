@@ -1,11 +1,17 @@
-import type { ActivateInput, ApiPort, LoginInput, RegisterDeviceInput } from "./port";
+import type {
+  ActivateInput,
+  ApiPort,
+  ChangePasswordInput,
+  LoginInput,
+  RegisterDeviceInput,
+} from "./port";
 import { ApiError, type Account, type AuthResult, type Device, type Project } from "./types";
 
 interface MockUser {
   password: string;
   disabled: boolean;
   projects: Project[];
-  devices: Device[];
+  devices: (Device & { revoked?: boolean })[];
 }
 
 interface MockInvite {
@@ -130,11 +136,95 @@ export class MockApi implements ApiPort {
     const existing = user.devices.find((device) => device.id === input.deviceId);
     if (existing) {
       existing.name = input.name;
-      return existing;
+      existing.revoked = false;
+      return this.publicDevice(existing);
     }
-    const device: Device = { id: input.deviceId, name: input.name, platform: "web" };
+    const device = {
+      id: input.deviceId,
+      name: input.name,
+      platform: "web",
+      createdAt: new Date().toISOString(),
+    };
     user.devices.push(device);
-    return device;
+    return this.publicDevice(device);
+  }
+
+  private publicDevice(device: Device & { revoked?: boolean }): Device {
+    const { revoked: _revoked, ...rest } = device;
+    return rest;
+  }
+
+  async listDevices(): Promise<Device[]> {
+    if (!this.sessionEmail) {
+      throw new ApiError("AUTHENTICATION_REQUIRED", "登录已失效，请重新登录。", 401);
+    }
+    return this.requireUser(this.sessionEmail)
+      .devices.filter((device) => !device.revoked)
+      .map((device) => this.publicDevice(device));
+  }
+
+  async renameDevice(id: string, name: string): Promise<Device> {
+    if (!this.sessionEmail) {
+      throw new ApiError("AUTHENTICATION_REQUIRED", "登录已失效，请重新登录。", 401);
+    }
+    const trimmed = name.trim();
+    if (!trimmed) throw new ApiError("VALIDATION_ERROR", "设备名称不能为空。", 400);
+    const device = this.requireUser(this.sessionEmail).devices.find(
+      (item) => item.id === id && !item.revoked,
+    );
+    if (!device) throw new ApiError("NOT_FOUND", "设备不存在。", 404);
+    device.name = trimmed;
+    return this.publicDevice(device);
+  }
+
+  async revokeDevice(id: string): Promise<void> {
+    if (!this.sessionEmail) {
+      throw new ApiError("AUTHENTICATION_REQUIRED", "登录已失效，请重新登录。", 401);
+    }
+    const user = this.requireUser(this.sessionEmail);
+    const device = user.devices.find((item) => item.id === id && !item.revoked);
+    if (!device) throw new ApiError("NOT_FOUND", "设备不存在。", 404);
+    device.revoked = true;
+    // 撤销本机设备即退出当前会话（§8.3 终局凭证失效要求重新登录）。
+    if (id === this.currentDeviceId()) {
+      this.sessionEmail = null;
+      try {
+        localStorage.removeItem(MOCK_REFRESH_KEY);
+      } catch {
+        // 忽略
+      }
+    }
+  }
+
+  private currentDeviceId(): string | null {
+    try {
+      const prefix = "tasktips:device-id:";
+      for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (key?.startsWith(prefix)) return localStorage.getItem(key);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async changePassword(input: ChangePasswordInput): Promise<void> {
+    if (!this.sessionEmail) {
+      throw new ApiError("AUTHENTICATION_REQUIRED", "登录已失效，请重新登录。", 401);
+    }
+    const user = this.requireUser(this.sessionEmail);
+    if (user.password !== input.currentPassword) {
+      throw new ApiError("INVALID_CREDENTIALS", "当前密码不正确。", 401);
+    }
+    user.password = input.newPassword;
+    // 改密后清理浏览器会话并要求重新登录（§8.3）。
+    this.sessionEmail = null;
+    try {
+      localStorage.removeItem(MOCK_REFRESH_KEY);
+    } catch {
+      // 忽略
+    }
   }
 
   async listProjects(): Promise<Project[]> {

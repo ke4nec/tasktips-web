@@ -108,6 +108,8 @@ export interface ContentPort {
   getSyncState(projectId: string): Promise<string | null>;
   putSyncState(projectId: string, state: string): Promise<void>;
   clearUserData(userId: string): Promise<void>;
+  /** 清理单个项目的本机副本（存储页；云端内容不受影响，下次打开重新下载）。 */
+  clearProjectData(projectId: string): Promise<void>;
 
   // 远端应用（同步引擎专用）：按远端版本覆盖，不经过回收站与墓碑。
   upsertTodoRemote(projectId: string, todo: Todo): Promise<void>;

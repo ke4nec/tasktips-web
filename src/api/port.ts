@@ -19,6 +19,11 @@ export interface RegisterDeviceInput {
   name: string;
 }
 
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
+}
+
 export interface ApiPort {
   login(input: LoginInput): Promise<AuthResult>;
   activateInvitation(input: ActivateInput): Promise<AuthResult>;
@@ -26,6 +31,10 @@ export interface ApiPort {
   logout(): Promise<void>;
   me(): Promise<Account>;
   registerDevice(input: RegisterDeviceInput): Promise<Device>;
+  listDevices(): Promise<Device[]>;
+  renameDevice(id: string, name: string): Promise<Device>;
+  revokeDevice(id: string): Promise<void>;
+  changePassword(input: ChangePasswordInput): Promise<void>;
   listProjects(): Promise<Project[]>;
   createProject(name: string): Promise<Project>;
   renameProject(id: string, name: string): Promise<Project>;

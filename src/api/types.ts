@@ -14,6 +14,10 @@ export interface Device {
   id: string;
   name: string;
   platform: string;
+  appVersion?: string;
+  createdAt?: string;
+  lastSeenAt?: string | null;
+  revokedAt?: string | null;
 }
 
 export interface Project {
