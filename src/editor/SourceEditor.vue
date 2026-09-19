@@ -5,7 +5,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 
-const props = defineProps<{ text: string }>();
+const props = defineProps<{ text: string; readonly?: boolean }>();
 const emit = defineEmits<{
   (e: "change", text: string): void;
   (e: "undo"): void;
@@ -108,6 +108,7 @@ onMounted(() => {
         ),
       ),
       markdown(),
+      EditorState.readOnly.of(props.readonly ?? false),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !applyingExternal) {

@@ -1,0 +1,236 @@
+import type {
+  ObjectEnvelope,
+  PushItemResult,
+  PushRequest,
+  SyncServerPort,
+  Tombstone,
+} from "@/sync/protocol";
+import { SyncError } from "@/sync/protocol";
+
+interface ServerObject {
+  revision: number;
+  hash: string;
+}
+
+interface ServerTombstone {
+  revision: number;
+  deletedAt: string;
+}
+
+interface ProjectState {
+  generation: number;
+  objects: Map<string, ServerObject>;
+  tombstones: Map<string, ServerTombstone>;
+  order: string[];
+  requests: Map<string, PushItemResult[]>;
+}
+
+const PAGE_LIMIT_MAX = 500;
+
+// 内存云端：实现 bootstrap/pull/push/幂等/冲突/-generation 语义，
+// 供同步引擎先行联调（对照移动端 StubServer 思路）。
+// 云端真实实现落地后由 HttpSync 替换，引擎代码不变。
+export class MockSyncServer implements SyncServerPort {
+  private projects = new Map<string, ProjectState>();
+  /** 可注入失败：() => 抛错（网络/限流/维护等场景测试）。 */
+  failNext: (() => Error) | null = null;
+  /** 仅下一次 push 失败（pull 正常通过，用于推送路径测试）。 */
+  failPushNext: (() => Error) | null = null;
+  /** 强制拒绝指定对象（超限/不支持场景测试）：命中一次后清除。 */
+  forceReject: { kind: string; id: string; code: string } | null = null;
+
+  private stateOf(projectId: string): ProjectState {
+    let state = this.projects.get(projectId);
+    if (!state) {
+      state = {
+        generation: 1,
+        objects: new Map(),
+        tombstones: new Map(),
+        order: [],
+        requests: new Map(),
+      };
+      this.projects.set(projectId, state);
+    }
+    return state;
+  }
+
+  private maybeFail() {
+    if (this.failNext) {
+      const fail = this.failNext;
+      this.failNext = null;
+      throw fail();
+    }
+  }
+
+  private key(kind: string, id: string): string {
+    return `${kind}/${id}`;
+  }
+
+  private page(
+    state: ProjectState,
+    cursor: string,
+    limit: number,
+  ): { changes: (ObjectEnvelope | Tombstone)[]; nextCursor: string; done: boolean } {
+    const start = cursor === "" ? 0 : Number(cursor);
+    if (!Number.isInteger(start) || start < 0 || start > state.order.length) {
+      throw new SyncError("CURSOR_INVALID", "同步游标无效，需重新初始化。");
+    }
+    const slice = state.order.slice(start, start + limit);
+    const changes: (ObjectEnvelope | Tombstone)[] = [];
+    for (const key of slice) {
+      const [kind, id] = key.split("/", 2) as [ObjectEnvelope["kind"], string];
+      const tomb = state.tombstones.get(key);
+      if (tomb) {
+        changes.push({
+          kind,
+          id,
+          revision: tomb.revision,
+          deletedAt: tomb.deletedAt,
+          projectId: "mock",
+        });
+      } else {
+        const object = state.objects.get(key) as ServerObject;
+        changes.push({ kind, id, revision: object.revision, hash: object.hash });
+      }
+    }
+    const next = start + slice.length;
+    return { changes, nextCursor: String(next), done: next >= state.order.length };
+  }
+
+  async bootstrap(projectId: string, cursor: string, limit: number) {
+    this.maybeFail();
+    const state = this.stateOf(projectId);
+    const { changes, nextCursor, done } = this.page(state, cursor, Math.min(limit, PAGE_LIMIT_MAX));
+    return { generation: state.generation, changes, nextCursor, done };
+  }
+
+  async pull(projectId: string, cursor: string, limit: number) {
+    this.maybeFail();
+    const state = this.stateOf(projectId);
+    const { changes, nextCursor, done } = this.page(state, cursor, Math.min(limit, PAGE_LIMIT_MAX));
+    return { generation: state.generation, changes, nextCursor, done };
+  }
+
+  async push(projectId: string, request: PushRequest) {
+    this.maybeFail();
+    if (this.failPushNext) {
+      const fail = this.failPushNext;
+      this.failPushNext = null;
+      throw fail();
+    }
+    const state = this.stateOf(projectId);
+    // requestId 幂等：原样返回首次结果（§9.1）。
+    const seen = state.requests.get(request.requestId);
+    if (seen) return { results: seen.map((item) => ({ ...item })) };
+    if (request.generation !== state.generation) {
+      throw new SyncError("GENERATION_MISMATCH", "服务端代次已变化，需重新初始化。");
+    }
+    const results: PushItemResult[] = [];
+    const forced = this.forceReject;
+    this.forceReject = null;
+    for (const item of request.objects) {
+      const key = this.key(item.kind, item.id);
+      if (forced && forced.kind === item.kind && forced.id === item.id) {
+        results.push({ kind: item.kind, id: item.id, status: "rejected", code: forced.code });
+        continue;
+      }
+      const current = state.objects.get(key);
+      if (current && current.revision !== item.baseRevision) {
+        results.push({
+          kind: item.kind,
+          id: item.id,
+          status: "conflict",
+          remoteRevision: current.revision,
+          remoteHash: current.hash,
+        });
+        continue;
+      }
+      const revision = item.baseRevision + 1;
+      state.objects.set(key, { revision, hash: item.hash });
+      state.tombstones.delete(key);
+      if (!state.order.includes(key)) state.order.push(key);
+      results.push({
+        kind: item.kind,
+        id: item.id,
+        status: "applied",
+        revision,
+        remoteHash: item.hash,
+      });
+    }
+    for (const item of request.tombstones) {
+      const key = this.key(item.kind, item.id);
+      const current = state.objects.get(key);
+      if (current && current.revision !== item.baseRevision) {
+        results.push({
+          kind: item.kind,
+          id: item.id,
+          status: "conflict",
+          remoteRevision: current.revision,
+          remoteHash: current.hash,
+        });
+        continue;
+      }
+      const revision = item.baseRevision + 1;
+      state.objects.delete(key);
+      state.tombstones.set(key, { revision, deletedAt: item.deletedAt });
+      if (!state.order.includes(key)) state.order.push(key);
+      results.push({ kind: item.kind, id: item.id, status: "applied", revision });
+    }
+    state.requests.set(
+      request.requestId,
+      results.map((item) => ({ ...item })),
+    );
+    return { results };
+  }
+
+  private payloads = new Map<string, string | ArrayBuffer>();
+
+  async hasPayload(hash: string): Promise<boolean> {
+    return this.payloads.has(hash);
+  }
+
+  async putPayload(hash: string, data: string | ArrayBuffer): Promise<void> {
+    this.payloads.set(hash, data);
+  }
+
+  async getPayload(hash: string): Promise<string | ArrayBuffer | null> {
+    return this.payloads.get(hash) ?? null;
+  }
+
+  // ---- 测试钩子 ----
+
+  /** 模拟远端直接写入（另一设备提交），推进对象版本。调用方先 putPayload。 */
+  remoteWrite(projectId: string, kind: ObjectEnvelope["kind"], id: string, hash: string) {
+    const state = this.stateOf(projectId);
+    const key = this.key(kind, id);
+    const current = state.objects.get(key);
+    const revision = (current?.revision ?? 0) + 1;
+    state.objects.set(key, { revision, hash });
+    if (!state.order.includes(key)) state.order.push(key);
+  }
+
+  /** 模拟远端删除。 */
+  remoteDelete(projectId: string, kind: ObjectEnvelope["kind"], id: string) {
+    const state = this.stateOf(projectId);
+    const key = this.key(kind, id);
+    const current = state.objects.get(key);
+    const revision = (current?.revision ?? 0) + 1;
+    state.objects.delete(key);
+    state.tombstones.set(key, { revision, deletedAt: new Date().toISOString() });
+    if (!state.order.includes(key)) state.order.push(key);
+  }
+
+  /** 模拟云端恢复：代次变化，旧游标与请求上下文废弃（§9.2）。 */
+  bumpGeneration(projectId: string) {
+    this.stateOf(projectId).generation += 1;
+  }
+
+  inspect(projectId: string): { generation: number; objects: number; requests: number } {
+    const state = this.stateOf(projectId);
+    return {
+      generation: state.generation,
+      objects: state.objects.size,
+      requests: state.requests.size,
+    };
+  }
+}

@@ -9,6 +9,7 @@ import IconButton from "@/components/IconButton.vue";
 import TodoRow from "@/components/list/TodoRow.vue";
 import { content } from "@/content";
 import { deriveTitle } from "@/domain/title";
+import { tryAcquireTaskLock } from "@/sync/locks";
 import type { Todo, TodoView } from "@/domain/types";
 import { altFromFileName, imagePath, storeImageBlob, validateImageFile } from "@/editor/images";
 import MilkdownDoc from "@/editor/MilkdownDoc.vue";
@@ -17,6 +18,7 @@ import { EditorSession, loadPrefs, savePrefs, type EditorMode } from "@/editor/s
 import SplitEditor from "@/editor/SplitEditor.vue";
 import { ApiError } from "@/api/types";
 import { useClassificationStore } from "@/stores/classification";
+import { useSyncStore } from "@/stores/sync";
 import { useTodoStore } from "@/stores/todos";
 import { useUiStore } from "@/stores/ui";
 
@@ -24,7 +26,27 @@ const route = useRoute();
 const router = useRouter();
 const todos = useTodoStore();
 const classification = useClassificationStore();
+const sync = useSyncStore();
 const ui = useUiStore();
+
+// 任务编辑会话锁：被其他标签页持有时只读展示并提示（§9.3）。
+const readonlyLock = ref(false);
+let releaseLock: (() => void) | null = null;
+
+function acquireTaskLock() {
+  releaseLock?.();
+  releaseLock = null;
+  readonlyLock.value = false;
+  if (isNew.value || createdId.value !== null || !todo.value) return;
+  // 持有式锁不能 await（会等到释放）；后台获取，拒绝时转只读并重挂编辑器。
+  void tryAcquireTaskLock(projectId.value, todo.value.id).then((held) => {
+    if (held === null) {
+      readonlyLock.value = true;
+    } else {
+      releaseLock = held;
+    }
+  });
+}
 
 const projectId = computed(() => route.params.projectId as string);
 const todoId = computed(() => route.params.todoId as string);
@@ -104,6 +126,7 @@ async function persistTodo(text: string): Promise<void> {
   const id = createdId.value ?? todoId.value;
   await content.updateTodo(projectId.value, id, { body: text });
   await todos.reload();
+  sync.notifyDirty(projectId.value);
 }
 
 function schedulePreview() {
@@ -122,12 +145,18 @@ async function loadTodo() {
   loading.value = true;
   loadError.value = "";
   try {
-    await Promise.all([
+    const results = await Promise.allSettled([
       todos.load(projectId.value),
       classification.load(projectId.value),
       // 预取项目图片二进制到内存注册，编辑器以 Blob URL 展示（§5.3）。
       content.listImages(projectId.value).catch(() => []),
     ]);
+    if (import.meta.env.DEV) {
+      console.log("[editor-debug] loads settled", results.map((result) => result.status).join(","));
+    }
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+    }
     if (!isNew.value) {
       const found = todos.todos.find((item) => item.id === todoId.value);
       if (!found) throw new ApiError("NOT_FOUND", "任务不存在。", 404);
@@ -143,6 +172,11 @@ async function loadTodo() {
     }
     session.value = created;
     previewText.value = created.text.value;
+    // 同一会话内 existing→existing 导航复用组件，需把新正文推给常驻适配器。
+    instantRef.value?.setText(previewText.value);
+    splitRef.value?.sourceRef?.setText(previewText.value);
+    splitRef.value?.previewRef?.setText(previewText.value);
+    acquireTaskLock();
   } catch (error) {
     loadError.value = error instanceof ApiError ? error.message : "任务加载失败。";
   } finally {
@@ -439,9 +473,13 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibilityChange);
   clearTimeout(previewTimer);
+  releaseLock?.();
+  releaseLock = null;
 });
 
 const contextTodos = computed(() => todos.results(fromView.value as TodoView));
+
+if (import.meta.env.DEV) console.log("[editor-debug] EditorPage setup", todoId.value);
 </script>
 
 <template>
@@ -489,13 +527,13 @@ const contextTodos = computed(() => todos.results(fromView.value as TodoView));
           <IconButton
             icon="undo"
             label="撤销"
-            :disabled="!session?.canUndo.value"
+            :disabled="!session?.canUndo.value || readonlyLock"
             @click="onUndo"
           />
           <IconButton
             icon="redo"
             label="重做"
-            :disabled="!session?.canRedo.value"
+            :disabled="!session?.canRedo.value || readonlyLock"
             @click="onRedo"
           />
           <IconButton
@@ -506,6 +544,10 @@ const contextTodos = computed(() => todos.results(fromView.value as TodoView));
           />
         </div>
 
+        <div v-if="readonlyLock" class="notice warning" style="margin: 12px 34px 0">
+          这条任务正在另一个标签页中编辑。当前页面为只读。
+        </div>
+
         <div class="editor-titlebar">
           <h1>{{ title }}</h1>
           <button
@@ -513,7 +555,7 @@ const contextTodos = computed(() => todos.results(fromView.value as TodoView));
             class="btn"
             :class="todo?.status === 'completed' ? 'green' : ''"
             :aria-pressed="todo?.status === 'completed'"
-            :disabled="!todo"
+            :disabled="!todo || readonlyLock"
             @click="toggleComplete"
           >
             {{ todo?.status === "completed" ? "已完成 · 重新打开" : "标记完成" }}
@@ -521,47 +563,122 @@ const contextTodos = computed(() => todos.results(fromView.value as TodoView));
         </div>
 
         <div class="editor-meta">
-          <button type="button" class="meta-chip" @click="openMeta('date')">
+          <button
+            type="button"
+            class="meta-chip"
+            :disabled="readonlyLock"
+            @click="openMeta('date')"
+          >
             <AppIcon name="calendar" />{{ todo?.dueDate ?? "截止日期" }}
           </button>
-          <button type="button" class="meta-chip" @click="openMeta('priority')">
+          <button
+            type="button"
+            class="meta-chip"
+            :disabled="readonlyLock"
+            @click="openMeta('priority')"
+          >
             <AppIcon name="flag" />{{
               ["无优先级", "低优先级", "中优先级", "高优先级"][todo?.priority ?? 0]
             }}
           </button>
-          <button type="button" class="meta-chip" @click="openMeta('category')">
+          <button
+            type="button"
+            class="meta-chip"
+            :disabled="readonlyLock"
+            @click="openMeta('category')"
+          >
             <AppIcon name="folder" />
             {{
               classification.categories.find((item) => item.id === todo?.categoryId)?.name ??
               "未分类"
             }}
           </button>
-          <button type="button" class="meta-chip" @click="openMeta('tags')">
+          <button
+            type="button"
+            class="meta-chip"
+            :disabled="readonlyLock"
+            @click="openMeta('tags')"
+          >
             <AppIcon name="tag" />{{ todo?.tags.join("、") || "添加标签" }}
           </button>
         </div>
 
         <div class="format-toolbar" role="toolbar" aria-label="格式">
-          <button type="button" aria-label="加粗" @click="onFormat('bold')">
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="加粗"
+            @click="onFormat('bold')"
+          >
             <strong>B</strong>
           </button>
-          <button type="button" aria-label="斜体" @click="onFormat('italic')"><em>I</em></button>
-          <button type="button" aria-label="删除线" @click="onFormat('strike')"><s>S</s></button>
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="斜体"
+            @click="onFormat('italic')"
+          >
+            <em>I</em>
+          </button>
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="删除线"
+            @click="onFormat('strike')"
+          >
+            <s>S</s>
+          </button>
           <span class="separator"></span>
-          <button type="button" aria-label="标题" @click="onFormat('heading')">H</button>
-          <button type="button" aria-label="列表" @click="onFormat('list')">
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="标题"
+            @click="onFormat('heading')"
+          >
+            H
+          </button>
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="列表"
+            @click="onFormat('list')"
+          >
             <AppIcon name="list" small />
           </button>
-          <button type="button" aria-label="任务清单" @click="onFormat('task')">
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="任务清单"
+            @click="onFormat('task')"
+          >
             <AppIcon name="circle-check" small />
           </button>
-          <button type="button" aria-label="引用" @click="onFormat('quote')">“</button>
-          <button type="button" aria-label="代码" @click="onFormat('code')">‹›</button>
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="引用"
+            @click="onFormat('quote')"
+          >
+            “
+          </button>
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="代码"
+            @click="onFormat('code')"
+          >
+            ‹›
+          </button>
           <span class="separator"></span>
-          <button type="button" aria-label="插入链接" @click="linkDialog = true">
+          <button
+            type="button"
+            :disabled="readonlyLock"
+            aria-label="插入链接"
+            @click="linkDialog = true"
+          >
             <AppIcon name="link" small />
           </button>
-          <button type="button" aria-label="导入图片" @click="onPickImage">
+          <button type="button" :disabled="readonlyLock" aria-label="导入图片" @click="onPickImage">
             <AppIcon name="image" small />
           </button>
           <input
@@ -582,8 +699,10 @@ const contextTodos = computed(() => todos.results(fromView.value as TodoView));
         <div v-show="mode === 'instant'" class="editor-content">
           <MilkdownDoc
             v-if="session"
+            :key="`instant-${readonlyLock}`"
             ref="instantRef"
             :initial="session.text.value"
+            :readonly="readonlyLock"
             :upload-files="uploadFiles"
             @change="onAdapterChange"
             @undo="onUndo"
@@ -595,7 +714,9 @@ const contextTodos = computed(() => todos.results(fromView.value as TodoView));
         <div v-show="mode === 'split'" class="split-host">
           <SplitEditor
             v-if="session"
+            :key="`split-${readonlyLock}`"
             ref="splitRef"
+            :readonly="readonlyLock"
             :source-text="session.text.value"
             :preview-text="previewText"
             :ratio="ratio"

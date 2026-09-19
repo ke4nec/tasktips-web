@@ -24,7 +24,7 @@ function systemIsDark(): boolean {
 }
 
 // 主题偏好（设计文档 §3.3：浅色 / 深色 / 跟随系统）。
-// 应用启动时由 main.ts 调用 initTheme()，与 public/theme-boot.js 首帧引导衔接。
+// 应用启动时由 main.ts 调用 initTheme()，与 index.html 内联首帧引导衔接。
 export const useThemeStore = defineStore("theme", () => {
   const preference = ref<ThemePreference>(readPreference());
   // 系统深色状态响应式化：computed 会缓存，变化必须经 ref 触发。

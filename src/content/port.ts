@@ -100,4 +100,17 @@ export interface ContentPort {
   listRecoveries(projectId: string): Promise<RecoveryCopy[]>;
   restoreRecovery(projectId: string, id: string): Promise<void>;
   deleteRecovery(projectId: string, id: string): Promise<void>;
+
+  // 同步支撑（§9）：修订计数、待确认墓碑、同步状态行、按账号清理。
+  getContentRevisions(projectId: string): Promise<{ classificationRev: number; indexRev: number }>;
+  getPendingTombstones(projectId: string): Promise<{ id: string; deletedAt: string }[]>;
+  confirmTombstone(projectId: string, id: string): Promise<void>;
+  getSyncState(projectId: string): Promise<string | null>;
+  putSyncState(projectId: string, state: string): Promise<void>;
+  clearUserData(userId: string): Promise<void>;
+
+  // 远端应用（同步引擎专用）：按远端版本覆盖，不经过回收站与墓碑。
+  upsertTodoRemote(projectId: string, todo: Todo): Promise<void>;
+  removeTodoLocal(projectId: string, id: string): Promise<void>;
+  replaceClassification(projectId: string, categories: Category[], tags: Tag[]): Promise<void>;
 }

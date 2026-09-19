@@ -32,6 +32,10 @@ interface MetaRow {
   scope: string;
   seededAt: string;
   seq: number;
+  classificationRev: number;
+  indexRev: number;
+  pendingTombstones: { id: string; deletedAt: string }[];
+  syncState?: string;
 }
 
 interface ScopedRow {
@@ -94,7 +98,6 @@ export class DexieContent implements ContentPort {
   ) {
     const db = new Dexie(dbName);
     // v1：任务/分类/标签/墓碑批次/排序/图片/恢复副本/元信息。
-    // P6 以 v2 追加同步状态（generation/cursor/基线/待提交），走显式迁移。
     db.version(1).stores({
       meta: "scope",
       todos: "key, scope, updatedAt",
@@ -105,6 +108,29 @@ export class DexieContent implements ContentPort {
       images: "key, scope",
       recoveries: "id, scope, createdAt",
     });
+    // v2：同步状态（generation/cursor/基线/待提交/冲突/日志，§9.1），
+    // 元信息补修订计数与待确认墓碑。显式迁移，失败保留旧数据（§7.2）。
+    db.version(2)
+      .stores({
+        meta: "scope",
+        todos: "key, scope, updatedAt",
+        categories: "key, scope",
+        tags: "key, scope",
+        batches: "key, scope",
+        customOrders: "scope",
+        images: "key, scope",
+        recoveries: "id, scope, createdAt",
+      })
+      .upgrade((tx) =>
+        tx
+          .table("meta")
+          .toCollection()
+          .modify((row: MetaRow) => {
+            row.classificationRev ??= 1;
+            row.indexRev ??= 1;
+            row.pendingTombstones ??= [];
+          }),
+      );
     this.db = db;
     this.meta = db.table("meta");
     this.todos = db.table("todos");
@@ -137,16 +163,40 @@ export class DexieContent implements ContentPort {
   private async nextId(scope: string, prefix: string): Promise<string> {
     const meta = await this.meta.get(scope);
     const seq = (meta?.seq ?? 0) + 1;
-    await this.meta.put({ scope, seededAt: meta?.seededAt ?? this.now(), seq });
+    await this.meta.put({
+      scope,
+      seededAt: meta?.seededAt ?? this.now(),
+      seq,
+      classificationRev: meta?.classificationRev ?? 1,
+      indexRev: meta?.indexRev ?? 1,
+      pendingTombstones: meta?.pendingTombstones ?? [],
+    });
     return `${prefix}-${seq}`;
+  }
+
+  private freshMeta(scope: string, seq: number): MetaRow {
+    return {
+      scope,
+      seededAt: this.now(),
+      seq,
+      classificationRev: 1,
+      indexRev: 1,
+      pendingTombstones: [],
+    };
+  }
+
+  private async touch(scope: string, field: "classificationRev" | "indexRev"): Promise<void> {
+    const meta = await this.meta.get(scope);
+    if (!meta) return;
+    meta[field] += 1;
+    await this.meta.put(meta);
   }
 
   private async ensureSeeded(scope: string, projectId: string): Promise<void> {
     const meta = await this.meta.get(scope);
     if (meta) return;
     const seed = projectId === "demo" ? seedProject() : emptyProject();
-    const stamp = this.now();
-    await this.meta.put({ scope, seededAt: stamp, seq: seed.seq });
+    await this.meta.put(this.freshMeta(scope, seed.seq));
     await this.todos.bulkPut(
       seed.todos.map((todo) => ({ ...todo, key: this.keyOf(scope, todo.id), scope })),
     );
@@ -200,6 +250,26 @@ export class DexieContent implements ContentPort {
     ];
   }
 
+  private queue: Promise<void> = Promise.resolve();
+
+  private async ready(): Promise<void> {
+    // 显式 open：懒打开在部分实现（fake-indexeddb）下建表不全，先就绪再开事务。
+    if (!this.db.isOpen()) await this.db.open();
+  }
+
+  private tx<T>(fn: () => Promise<T>): Promise<T> {
+    // 串行化全部事务：并发读写事务在真实 IndexedDB 下可互锁，
+    // 且与 Dexie 的隐式事务复用规则叠加后难以预测，应用层排队最稳妥。
+    const run = this.queue.then(() =>
+      this.ready().then(() => this.db.transaction("rw", this.allTables(), fn)),
+    );
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   private strip<T extends ScopedRow>(row: T): Omit<T, "key" | "scope"> {
     const { key: _key, scope: _scope, ...rest } = row;
     return rest;
@@ -221,7 +291,7 @@ export class DexieContent implements ContentPort {
 
   async listTodos(projectId: string): Promise<Todo[]> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       await this.sweep(scope);
       return (await this.scopedTodos(scope)).map((row) => ({ ...this.strip(row) }));
@@ -230,7 +300,7 @@ export class DexieContent implements ContentPort {
 
   async createTodo(projectId: string, input: CreateTodoInput): Promise<Todo> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const body = input.body ?? "";
       const createdAt = this.now();
@@ -257,7 +327,7 @@ export class DexieContent implements ContentPort {
 
   async updateTodo(projectId: string, id: string, patch: TodoPatch): Promise<Todo> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.todos.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "任务不存在。", 404);
@@ -275,6 +345,7 @@ export class DexieContent implements ContentPort {
         if (patch.categoryId === null) delete row.categoryId;
         else row.categoryId = patch.categoryId;
       }
+      row.seeded = false;
       row.updatedAt = this.now();
       row.revision += 1;
       await this.todos.put(row);
@@ -284,13 +355,14 @@ export class DexieContent implements ContentPort {
 
   async setCompleted(projectId: string, id: string, completed: boolean): Promise<Todo> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.todos.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "任务不存在。", 404);
       row.status = completed ? "completed" : "open";
       if (completed) row.completedAt = this.now();
       else delete row.completedAt;
+      row.seeded = false;
       row.updatedAt = this.now();
       row.revision += 1;
       await this.todos.put(row);
@@ -300,7 +372,7 @@ export class DexieContent implements ContentPort {
 
   async deleteTodo(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.todos.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "任务不存在。", 404);
@@ -308,6 +380,7 @@ export class DexieContent implements ContentPort {
         row.deletedAt = this.now();
         row.updatedAt = row.deletedAt;
         row.revision += 1;
+        row.seeded = false;
         await this.todos.put(row);
       }
     });
@@ -315,22 +388,35 @@ export class DexieContent implements ContentPort {
 
   async restoreTodo(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.todos.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "任务不存在。", 404);
       delete row.deletedAt;
       row.updatedAt = this.now();
       row.revision += 1;
+      row.seeded = false;
       await this.todos.put(row);
     });
   }
 
+  private async recordTombstone(scope: string, id: string): Promise<void> {
+    // 彻底删除经墓碑传播；目录/标签删除经 classification 对象传播，不新增 kind（§4.2）。
+    const meta = await this.meta.get(scope);
+    if (!meta) return;
+    if (!meta.pendingTombstones.some((item) => item.id === id)) {
+      meta.pendingTombstones.push({ id, deletedAt: this.now() });
+      await this.meta.put(meta);
+    }
+  }
+
   async purgeTodo(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       await this.stashLocked(scope, "彻底删除任务前");
+      await this.recordTombstone(scope, id);
+      await this.touch(scope, "indexRev");
       await this.todos.delete(this.keyOf(scope, id));
       const order = await this.customOrders.get(scope);
       if (order) {
@@ -345,7 +431,7 @@ export class DexieContent implements ContentPort {
 
   async listCategories(projectId: string): Promise<Category[]> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       await this.sweep(scope);
       return (await this.scopedCategories(scope)).map((row) => ({ ...this.strip(row) }));
@@ -354,7 +440,7 @@ export class DexieContent implements ContentPort {
 
   async createCategory(projectId: string, input: CreateCategoryInput): Promise<Category> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const categories = await this.scopedCategories(scope);
       const issue = categoryNameIssue(input.name);
@@ -389,6 +475,7 @@ export class DexieContent implements ContentPort {
         updatedAt: createdAt,
       };
       await this.categories.put(row);
+      await this.touch(scope, "classificationRev");
       return { ...this.strip(row) };
     });
   }
@@ -399,7 +486,7 @@ export class DexieContent implements ContentPort {
     input: { name: string; color?: string },
   ): Promise<Category> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.categories.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "目录不存在。", 404);
@@ -410,6 +497,7 @@ export class DexieContent implements ContentPort {
         throw new ApiError("VALIDATION_ERROR", "同级目录已存在同名目录。", 400);
       }
       row.name = input.name.trim();
+      row.seeded = false;
       if (input.color !== undefined) {
         if (!isPaletteColor(input.color)) {
           throw new ApiError("VALIDATION_ERROR", "颜色不在预设色板中。", 400);
@@ -418,13 +506,14 @@ export class DexieContent implements ContentPort {
       }
       row.updatedAt = this.now();
       await this.categories.put(row);
+      await this.touch(scope, "classificationRev");
       return { ...this.strip(row) };
     });
   }
 
   async moveCategory(projectId: string, id: string, parentId: string | null): Promise<Category> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.categories.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "目录不存在。", 404);
@@ -439,8 +528,10 @@ export class DexieContent implements ContentPort {
         throw new ApiError("VALIDATION_ERROR", "目标位置已存在同名目录。", 400);
       }
       row.parentId = parentId;
+      row.seeded = false;
       row.updatedAt = this.now();
       await this.categories.put(row);
+      await this.touch(scope, "classificationRev");
       return { ...this.strip(row) };
     });
   }
@@ -462,7 +553,7 @@ export class DexieContent implements ContentPort {
 
   async deleteCategory(projectId: string, id: string): Promise<CategoryDeleteImpact> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const categories = await this.scopedCategories(scope);
       const root = categories.find((item) => item.id === id);
@@ -475,6 +566,7 @@ export class DexieContent implements ContentPort {
         if (row && !row.deletedAt) {
           row.deletedAt = deletedAt;
           row.updatedAt = deletedAt;
+          row.seeded = false;
           await this.categories.put(row);
         }
       }
@@ -496,13 +588,14 @@ export class DexieContent implements ContentPort {
         categoryIds: subtreeIds,
         todoIds: batchTodoIds,
       });
+      await this.touch(scope, "classificationRev");
       return { categories: subtreeIds.length, todos: batchTodoIds.length };
     });
   }
 
   async restoreCategory(projectId: string, id: string): Promise<CategoryRestoreResult> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.categories.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "目录不存在。", 404);
@@ -520,6 +613,7 @@ export class DexieContent implements ContentPort {
         }
         delete item.deletedAt;
         item.updatedAt = this.now();
+        item.seeded = false;
         await this.categories.put(item);
       };
       if (batch) {
@@ -537,13 +631,14 @@ export class DexieContent implements ContentPort {
       } else {
         await restoreOne(id);
       }
+      await this.touch(scope, "classificationRev");
       return { restoredTodos, conflicts };
     });
   }
 
   async purgeCategory(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const categories = await this.scopedCategories(scope);
       const subtreeIds = [id, ...this.descendantIds(categories, id)];
@@ -570,6 +665,9 @@ export class DexieContent implements ContentPort {
         order.all = order.all.filter((todoId) => !removedTodoIds.has(todoId));
         await this.customOrders.put(order);
       }
+      for (const todoId of removedTodoIds) await this.recordTombstone(scope, todoId);
+      await this.touch(scope, "classificationRev");
+      await this.touch(scope, "indexRev");
     });
   }
 
@@ -577,7 +675,7 @@ export class DexieContent implements ContentPort {
 
   async listTags(projectId: string): Promise<Tag[]> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       await this.sweep(scope);
       return (await this.scopedTags(scope)).map((row) => ({ ...this.strip(row) }));
@@ -586,7 +684,7 @@ export class DexieContent implements ContentPort {
 
   async createTag(projectId: string, input: CreateTagInput): Promise<Tag> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const tags = await this.scopedTags(scope);
       const issue = tagNameIssue(input.name);
@@ -614,13 +712,14 @@ export class DexieContent implements ContentPort {
         updatedAt: createdAt,
       };
       await this.tags.put(row);
+      await this.touch(scope, "classificationRev");
       return { ...this.strip(row) };
     });
   }
 
   async renameTag(projectId: string, id: string, name: string): Promise<Tag> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.tags.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "标签不存在。", 404);
@@ -633,6 +732,7 @@ export class DexieContent implements ContentPort {
       const previous = row.name.toLowerCase();
       row.name = name.trim();
       row.updatedAt = this.now();
+      row.seeded = false;
       await this.tags.put(row);
       const todos = await this.scopedTodos(scope);
       for (const todo of todos) {
@@ -646,41 +746,46 @@ export class DexieContent implements ContentPort {
           await this.todos.put(todo);
         }
       }
+      await this.touch(scope, "classificationRev");
       return { ...this.strip(row) };
     });
   }
 
   async setTagGroup(projectId: string, id: string, group: string): Promise<Tag> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.tags.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "标签不存在。", 404);
       row.group = group.trim();
       row.updatedAt = this.now();
+      row.seeded = false;
       await this.tags.put(row);
+      await this.touch(scope, "classificationRev");
       return { ...this.strip(row) };
     });
   }
 
   async deleteTagGroup(projectId: string, group: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const tags = await this.scopedTags(scope);
       for (const tag of tags) {
         if (!tag.deletedAt && tag.group === group) {
           tag.group = "";
           tag.updatedAt = this.now();
+          tag.seeded = false;
           await this.tags.put(tag);
         }
       }
+      await this.touch(scope, "classificationRev");
     });
   }
 
   async deleteTag(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.tags.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "标签不存在。", 404);
@@ -688,14 +793,16 @@ export class DexieContent implements ContentPort {
       if (!row.deletedAt) {
         row.deletedAt = this.now();
         row.updatedAt = row.deletedAt;
+        row.seeded = false;
         await this.tags.put(row);
       }
+      await this.touch(scope, "classificationRev");
     });
   }
 
   async restoreTag(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.tags.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "标签不存在。", 404);
@@ -706,13 +813,15 @@ export class DexieContent implements ContentPort {
       }
       delete row.deletedAt;
       row.updatedAt = this.now();
+      row.seeded = false;
       await this.tags.put(row);
+      await this.touch(scope, "classificationRev");
     });
   }
 
   async purgeTag(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.tags.get(this.keyOf(scope, id));
       if (!row) throw new ApiError("NOT_FOUND", "标签不存在。", 404);
@@ -729,6 +838,7 @@ export class DexieContent implements ContentPort {
         }
       }
       await this.tags.delete(this.keyOf(scope, id));
+      await this.touch(scope, "classificationRev");
     });
   }
 
@@ -746,7 +856,7 @@ export class DexieContent implements ContentPort {
 
   async listTrash(projectId: string): Promise<TrashSnapshot> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       await this.sweep(scope);
       const todos = await this.scopedTodos(scope);
@@ -792,7 +902,7 @@ export class DexieContent implements ContentPort {
 
   async emptyTrash(projectId: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       await this.stashLocked(scope, "清空回收站前");
       const removedTodoIds = new Set(
@@ -825,7 +935,7 @@ export class DexieContent implements ContentPort {
 
   async getCustomOrder(projectId: string): Promise<CustomOrder> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const order = await this.customOrders.get(scope);
       return { inbox: [...(order?.inbox ?? [])], all: [...(order?.all ?? [])] };
@@ -834,7 +944,7 @@ export class DexieContent implements ContentPort {
 
   async setCustomOrder(projectId: string, view: "inbox" | "all", ids: string[]): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const order = (await this.customOrders.get(scope)) ?? { scope, inbox: [], all: [] };
       const deletedIds = new Set(
@@ -846,6 +956,7 @@ export class DexieContent implements ContentPort {
       }
       order[view] = merged;
       await this.customOrders.put(order);
+      await this.touch(scope, "indexRev");
     });
   }
 
@@ -853,7 +964,7 @@ export class DexieContent implements ContentPort {
 
   async putImage(projectId: string, path: string, blob: Blob): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       await this.images.put({
         key: this.keyOf(scope, path),
@@ -868,7 +979,7 @@ export class DexieContent implements ContentPort {
 
   async listImages(projectId: string): Promise<ContentImage[]> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const rows = await this.images.where("scope").equals(scope).toArray();
       for (const row of rows) storeImageBlob(row.path, row.blob);
@@ -880,7 +991,7 @@ export class DexieContent implements ContentPort {
 
   async exportSnapshot(projectId: string): Promise<ContentSnapshot> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const [todos, categories, tags, order, images] = await Promise.all([
         this.scopedTodos(scope),
@@ -946,7 +1057,7 @@ export class DexieContent implements ContentPort {
     const issue = this.validateSnapshot(snapshot);
     if (issue) throw new ApiError("VALIDATION_ERROR", issue, 400);
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       // 先保留当前内容恢复副本，再事务切换；失败由事务回滚保证不形成半份项目。
       await this.stashLocked(scope, "导入快照前");
@@ -993,7 +1104,7 @@ export class DexieContent implements ContentPort {
 
   async stashRecovery(projectId: string, label: string): Promise<RecoveryCopy> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.stashLocked(scope, label);
       return { id: row.id, label: row.label, createdAt: row.createdAt };
@@ -1002,7 +1113,7 @@ export class DexieContent implements ContentPort {
 
   async listRecoveries(projectId: string): Promise<RecoveryCopy[]> {
     const scope = this.scopeOf(projectId);
-    return this.db.transaction("rw", this.allTables(), async () => {
+    return this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const rows = await this.recoveries.where("scope").equals(scope).sortBy("createdAt");
       return rows
@@ -1013,7 +1124,7 @@ export class DexieContent implements ContentPort {
 
   async restoreRecovery(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.recoveries.get(id);
       if (!row || row.scope !== scope) throw new ApiError("NOT_FOUND", "恢复副本不存在。", 404);
@@ -1024,11 +1135,135 @@ export class DexieContent implements ContentPort {
 
   async deleteRecovery(projectId: string, id: string): Promise<void> {
     const scope = this.scopeOf(projectId);
-    await this.db.transaction("rw", this.allTables(), async () => {
+    await this.tx(async () => {
       await this.ensureSeeded(scope, projectId);
       const row = await this.recoveries.get(id);
       if (!row || row.scope !== scope) throw new ApiError("NOT_FOUND", "恢复副本不存在。", 404);
       await this.recoveries.delete(id);
+    });
+  }
+
+  // ---- 同步支撑 ----
+
+  async getContentRevisions(
+    projectId: string,
+  ): Promise<{ classificationRev: number; indexRev: number }> {
+    const scope = this.scopeOf(projectId);
+    return this.tx(async () => {
+      await this.ensureSeeded(scope, projectId);
+      const meta = await this.meta.get(scope);
+      return {
+        classificationRev: meta?.classificationRev ?? 1,
+        indexRev: meta?.indexRev ?? 1,
+      };
+    });
+  }
+
+  async getPendingTombstones(projectId: string): Promise<{ id: string; deletedAt: string }[]> {
+    const scope = this.scopeOf(projectId);
+    return this.tx(async () => {
+      await this.ensureSeeded(scope, projectId);
+      const meta = await this.meta.get(scope);
+      return [...(meta?.pendingTombstones ?? [])];
+    });
+  }
+
+  async confirmTombstone(projectId: string, id: string): Promise<void> {
+    const scope = this.scopeOf(projectId);
+    await this.tx(async () => {
+      const meta = await this.meta.get(scope);
+      if (!meta) return;
+      meta.pendingTombstones = meta.pendingTombstones.filter((item) => item.id !== id);
+      await this.meta.put(meta);
+    });
+  }
+
+  async getSyncState(projectId: string): Promise<string | null> {
+    const scope = this.scopeOf(projectId);
+    return this.tx(async () => {
+      await this.ensureSeeded(scope, projectId);
+      const row = await this.meta.get(scope);
+      return row?.syncState ?? null;
+    });
+  }
+
+  async putSyncState(projectId: string, state: string): Promise<void> {
+    const scope = this.scopeOf(projectId);
+    await this.tx(async () => {
+      await this.ensureSeeded(scope, projectId);
+      const row = await this.meta.get(scope);
+      if (!row) return;
+      row.syncState = state;
+      await this.meta.put(row);
+    });
+  }
+
+  async upsertTodoRemote(projectId: string, todo: Todo): Promise<void> {
+    const scope = this.scopeOf(projectId);
+    await this.tx(async () => {
+      await this.ensureSeeded(scope, projectId);
+      await this.todos.put({ ...todo, seeded: false, key: this.keyOf(scope, todo.id), scope });
+    });
+  }
+
+  async removeTodoLocal(projectId: string, id: string): Promise<void> {
+    const scope = this.scopeOf(projectId);
+    await this.tx(async () => {
+      await this.ensureSeeded(scope, projectId);
+      await this.todos.delete(this.keyOf(scope, id));
+      const order = await this.customOrders.get(scope);
+      if (order) {
+        order.inbox = order.inbox.filter((todoId) => todoId !== id);
+        order.all = order.all.filter((todoId) => todoId !== id);
+        await this.customOrders.put(order);
+      }
+    });
+  }
+
+  async replaceClassification(
+    projectId: string,
+    categories: Category[],
+    tags: Tag[],
+  ): Promise<void> {
+    const scope = this.scopeOf(projectId);
+    await this.tx(async () => {
+      await this.ensureSeeded(scope, projectId);
+      await this.categories.where("scope").equals(scope).delete();
+      await this.tags.where("scope").equals(scope).delete();
+      await this.categories.bulkPut(
+        categories.map((category) => ({
+          ...category,
+          seeded: false,
+          key: this.keyOf(scope, category.id),
+          scope,
+        })),
+      );
+      await this.tags.bulkPut(
+        tags.map((tag) => ({ ...tag, seeded: false, key: this.keyOf(scope, tag.id), scope })),
+      );
+      await this.touch(scope, "classificationRev");
+    });
+  }
+
+  async clearUserData(userId: string): Promise<void> {
+    // 退出默认清理该账号的本地内容（§8.3）；种子在下次加载时重建。
+    const prefix = `${userId}\n`;
+    await this.tx(async () => {
+      for (const table of [
+        this.meta,
+        this.todos,
+        this.categories,
+        this.tags,
+        this.batches,
+        this.customOrders,
+        this.images,
+        this.recoveries,
+      ]) {
+        const keys = await table
+          .filter((row) => typeof row.scope === "string" && row.scope.startsWith(prefix))
+          .primaryKeys();
+        if (keys.length > 0) await table.bulkDelete(keys);
+      }
     });
   }
 }

@@ -7,6 +7,7 @@ import { buildCategoryTree } from "@/domain/classification";
 import type { Category, CategoryNode, Tag, TagGroup } from "@/domain/types";
 import { groupTags } from "@/domain/classification";
 import { useTodoStore } from "@/stores/todos";
+import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
 
 // 分类 store：目录树、标签与分组、回收站（设计文档 §4.2）。
@@ -42,9 +43,14 @@ export const useClassificationStore = defineStore("classification", () => {
     useUiStore().notify(message);
   }
 
+  function synced() {
+    if (projectId.value) useSyncStore().notifyDirty(projectId.value);
+  }
+
   async function createCategory(name: string, parentId: string | null, color?: string) {
     const category = await content.createCategory(projectId.value, { name, parentId, color });
     categories.value = await content.listCategories(projectId.value);
+    synced();
     notify(`已创建目录“${category.name}”`);
     return category;
   }
@@ -52,6 +58,7 @@ export const useClassificationStore = defineStore("classification", () => {
   async function renameCategory(id: string, name: string, color?: string) {
     const category = await content.renameCategory(projectId.value, id, { name, color });
     categories.value = await content.listCategories(projectId.value);
+    synced();
     notify("目录已重命名");
     return category;
   }
@@ -59,6 +66,7 @@ export const useClassificationStore = defineStore("classification", () => {
   async function moveCategory(id: string, parentId: string | null) {
     const category = await content.moveCategory(projectId.value, id, parentId);
     categories.value = await content.listCategories(projectId.value);
+    synced();
     notify("目录位置已更新");
     return category;
   }
@@ -67,6 +75,7 @@ export const useClassificationStore = defineStore("classification", () => {
     const impact = await content.deleteCategory(projectId.value, id);
     categories.value = await content.listCategories(projectId.value);
     await useTodoStore().reload();
+    synced();
     notify(`已移入回收站（${impact.categories} 个目录、${impact.todos} 条任务）`);
     return impact;
   }
@@ -76,6 +85,7 @@ export const useClassificationStore = defineStore("classification", () => {
     categories.value = await content.listCategories(projectId.value);
     await reloadTrash();
     await useTodoStore().reload();
+    synced();
     if (result.conflicts.length > 0) {
       notify(`同名冲突已保留：${result.conflicts.join("、")}`);
     } else {
@@ -89,12 +99,14 @@ export const useClassificationStore = defineStore("classification", () => {
     categories.value = await content.listCategories(projectId.value);
     await reloadTrash();
     await useTodoStore().reload();
+    synced();
     notify("已彻底删除");
   }
 
   async function createTag(name: string, group = "", color?: string) {
     const tag = await content.createTag(projectId.value, { name, group, color });
     tags.value = await content.listTags(projectId.value);
+    synced();
     notify(`已创建标签“${tag.name}”`);
     return tag;
   }
@@ -103,6 +115,7 @@ export const useClassificationStore = defineStore("classification", () => {
     const tag = await content.renameTag(projectId.value, id, name);
     tags.value = await content.listTags(projectId.value);
     await useTodoStore().reload();
+    synced();
     notify("标签已重命名，相关任务已同步更新");
     return tag;
   }
@@ -110,6 +123,7 @@ export const useClassificationStore = defineStore("classification", () => {
   async function setTagGroup(id: string, group: string) {
     const tag = await content.setTagGroup(projectId.value, id, group);
     tags.value = await content.listTags(projectId.value);
+    synced();
     notify("标签分组已更新");
     return tag;
   }
@@ -117,12 +131,14 @@ export const useClassificationStore = defineStore("classification", () => {
   async function deleteTagGroup(group: string) {
     await content.deleteTagGroup(projectId.value, group);
     tags.value = await content.listTags(projectId.value);
+    synced();
     notify(`分组已删除，组内标签移入“其他”`);
   }
 
   async function deleteTag(id: string) {
     await content.deleteTag(projectId.value, id);
     tags.value = await content.listTags(projectId.value);
+    synced();
     notify("标签已移入回收站，任务引用保留");
   }
 
@@ -130,6 +146,7 @@ export const useClassificationStore = defineStore("classification", () => {
     await content.restoreTag(projectId.value, id);
     tags.value = await content.listTags(projectId.value);
     await reloadTrash();
+    synced();
     notify("标签已恢复");
   }
 
@@ -138,6 +155,7 @@ export const useClassificationStore = defineStore("classification", () => {
     tags.value = await content.listTags(projectId.value);
     await reloadTrash();
     await useTodoStore().reload();
+    synced();
     notify("标签已彻底删除，任务引用已移除");
   }
 
@@ -145,6 +163,7 @@ export const useClassificationStore = defineStore("classification", () => {
     await content.restoreTodo(projectId.value, id);
     await reloadTrash();
     await useTodoStore().reload();
+    synced();
     notify("已恢复到原位置");
   }
 
@@ -152,6 +171,7 @@ export const useClassificationStore = defineStore("classification", () => {
     await content.purgeTodo(projectId.value, id);
     await reloadTrash();
     await useTodoStore().reload();
+    synced();
     notify("已彻底删除");
   }
 
@@ -159,6 +179,7 @@ export const useClassificationStore = defineStore("classification", () => {
     await content.emptyTrash(projectId.value);
     await reloadTrash();
     await useTodoStore().reload();
+    synced();
     notify("回收站已清空");
   }
 

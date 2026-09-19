@@ -10,9 +10,10 @@ const props = withDefaults(
     previewText: string;
     ratio: number;
     syncScroll: boolean;
+    readonly?: boolean;
     uploadFiles: (files: File[]) => Promise<{ src: string; alt: string }[]>;
   }>(),
-  {},
+  { readonly: false },
 );
 
 const emit = defineEmits<{
@@ -103,6 +104,7 @@ defineExpose({ sourceRef, previewRef });
         <SourceEditor
           ref="sourceRef"
           :text="props.sourceText"
+          :readonly="props.readonly"
           @change="emit('change', $event)"
           @undo="emit('undo')"
           @redo="emit('redo')"

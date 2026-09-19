@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, useId, watch } from "vue";
+
+// 同页多弹层并存（关闭的 <dialog> 仍在 DOM），标题 id 必须实例唯一，
+// 否则 aria-labelledby 会解析到首个同名标题导致读屏与定位错乱。
+const titleId = useId();
 
 const props = withDefaults(
   defineProps<{
@@ -62,12 +66,12 @@ watch(
 <template>
   <dialog
     ref="dialogRef"
-    aria-labelledby="app-dialog-title"
+    :aria-labelledby="titleId"
     @close="onNativeClose"
     @click="onBackdropClick"
   >
     <div class="dialog-header">
-      <h2 id="app-dialog-title">{{ title }}</h2>
+      <h2 :id="titleId">{{ title }}</h2>
       <button type="button" class="icon-btn" aria-label="关闭弹层" @click="close">✕</button>
     </div>
     <form @submit="onSubmit">

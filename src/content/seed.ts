@@ -38,6 +38,7 @@ function makeTodo(
     createdAt,
     updatedAt: stamp(1),
     revision: 1,
+    seeded: true,
     ...partial,
     id,
   };
@@ -59,6 +60,7 @@ export function seedProject(): SeedState {
       orderIndex: 0,
       createdAt: stamp(20),
       updatedAt: stamp(20),
+      seeded: true,
     },
     {
       id: "c-seed-life",
@@ -70,6 +72,7 @@ export function seedProject(): SeedState {
       orderIndex: 1,
       createdAt: stamp(20),
       updatedAt: stamp(20),
+      seeded: true,
     },
     {
       id: "c-seed-reading",
@@ -81,6 +84,7 @@ export function seedProject(): SeedState {
       orderIndex: 0,
       createdAt: stamp(19),
       updatedAt: stamp(19),
+      seeded: true,
     },
   ];
   const tags: Tag[] = [
@@ -94,6 +98,7 @@ export function seedProject(): SeedState {
       group: "属性",
       createdAt: stamp(20),
       updatedAt: stamp(20),
+      seeded: true,
     },
     {
       id: "tag-seed-life",
@@ -105,6 +110,7 @@ export function seedProject(): SeedState {
       group: "",
       createdAt: stamp(20),
       updatedAt: stamp(20),
+      seeded: true,
     },
     {
       id: "tag-seed-idea",
@@ -116,6 +122,7 @@ export function seedProject(): SeedState {
       group: "",
       createdAt: stamp(15),
       updatedAt: stamp(15),
+      seeded: true,
     },
   ];
   const todos: Todo[] = [

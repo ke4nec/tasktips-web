@@ -18,6 +18,8 @@ export interface Todo {
   completedAt?: string;
   deletedAt?: string; // 置位即在回收站
   revision: number;
+  /** 本机演示种子标记（仅本地意，不同步不序列化）；任何用户修改后清除。 */
+  seeded?: boolean;
 }
 
 export type TodoView = "inbox" | "today" | "upcoming" | "completed" | "all";
@@ -72,6 +74,8 @@ export interface Category {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
+  /** 本机演示种子标记（仅本地意，不同步不序列化）；任何用户修改后清除。 */
+  seeded?: boolean;
 }
 
 export interface Tag {
@@ -85,6 +89,8 @@ export interface Tag {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
+  /** 本机演示种子标记（仅本地意，不同步不序列化）；任何用户修改后清除。 */
+  seeded?: boolean;
 }
 
 export interface CategoryNode extends Category {

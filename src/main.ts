@@ -12,7 +12,7 @@ import "@/styles/components.css";
 const app = createApp(App);
 app.use(createPinia());
 app.use(router);
-// 主题尽早应用，与 theme-boot 首帧引导衔接；跟随系统时监听变化。
+// 主题尽早应用，与 index.html 内联首帧引导衔接；跟随系统时监听变化。
 useThemeStore().initTheme();
 installSessionE2EHook();
 // 启动恢复浏览器会话（§8.3）：失败即未登录态，守卫会引导至登录页。

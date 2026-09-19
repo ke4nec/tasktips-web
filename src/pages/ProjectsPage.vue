@@ -6,14 +6,17 @@ import AppDialog from "@/components/AppDialog.vue";
 import AppIcon from "@/components/AppIcon.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import IconButton from "@/components/IconButton.vue";
-import LogoutDialog from "@/components/LogoutDialog.vue";
+import LogoutDialog, { type LogoutChoice } from "@/components/LogoutDialog.vue";
 import { ApiError } from "@/api/types";
+import { content } from "@/content";
 import { useProjectStore } from "@/stores/project";
 import { useSessionStore } from "@/stores/session";
+import { useSyncStore } from "@/stores/sync";
 
 const router = useRouter();
 const session = useSessionStore();
 const projects = useProjectStore();
+const sync = useSyncStore();
 
 const loading = ref(true);
 const loadError = ref("");
@@ -76,9 +79,23 @@ async function enter(projectId: string) {
   await router.push({ name: "project-view", params: { projectId, view: "today" } });
 }
 
-async function onLogoutConfirm() {
+async function openLogout() {
+  const entry = projects.entryProject();
+  if (entry) await sync.refresh(entry.id).catch(() => undefined);
+  logoutOpen.value = true;
+}
+
+async function onLogoutConfirm(choice: LogoutChoice) {
   logoutOpen.value = false;
+  if (choice === "sync") {
+    // 同步后退出：先手动同步当前入口项目（§8.3）。
+    const entry = projects.entryProject();
+    if (entry) await sync.syncNowManual(entry.id).catch(() => undefined);
+  }
+  const email = session.account?.email;
   await session.logout();
+  // 退出默认清理该账号的本地内容（§8.3）。
+  if (email) await content.clearUserData(email).catch(() => undefined);
   await router.push({ name: "login" });
 }
 </script>
@@ -89,7 +106,7 @@ async function onLogoutConfirm() {
       <span class="logo"
         ><span class="logo-mark"><AppIcon name="logo" /></span>TaskTips</span
       >
-      <button type="button" class="btn text" @click="logoutOpen = true">退出登录</button>
+      <button type="button" class="btn text" @click="openLogout">退出登录</button>
     </div>
     <div class="project-content">
       <div class="page-heading">
@@ -159,6 +176,7 @@ async function onLogoutConfirm() {
 
     <LogoutDialog
       :open="logoutOpen"
+      :pending-count="sync.pendingCount"
       @update:open="logoutOpen = $event"
       @confirm="onLogoutConfirm"
     />

@@ -17,6 +17,7 @@ import type {
   TodoView,
 } from "@/domain/types";
 import { useClassificationStore } from "@/stores/classification";
+import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
 
 // 任务工作台 store：查询状态、默认/显式/自定义排序、完成与删除。
@@ -89,6 +90,7 @@ export const useTodoStore = defineStore("todos", () => {
   async function create(input: CreateTodoInput): Promise<Todo> {
     const todo = await content.createTodo(projectId.value, input);
     await reload();
+    useSyncStore().notifyDirty(projectId.value);
     return todo;
   }
 
@@ -98,12 +100,14 @@ export const useTodoStore = defineStore("todos", () => {
     const completed = todo.status !== "completed";
     await content.setCompleted(projectId.value, id, completed);
     await reload();
+    useSyncStore().notifyDirty(projectId.value);
     useUiStore().notify(completed ? "又完成了一件小事。" : "任务已重新打开");
   }
 
   async function remove(id: string) {
     await content.deleteTodo(projectId.value, id);
     await reload();
+    useSyncStore().notifyDirty(projectId.value);
     useUiStore().notify("已移入回收站");
   }
 
@@ -111,6 +115,7 @@ export const useTodoStore = defineStore("todos", () => {
     // 写回保留已有软删除 ID 由仓储层合并（§4.1）。
     await content.setCustomOrder(projectId.value, view, ids);
     customOrder.value = await content.getCustomOrder(projectId.value);
+    useSyncStore().notifyDirty(projectId.value);
   }
 
   function setSearch(value: string) {

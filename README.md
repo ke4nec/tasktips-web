@@ -3,7 +3,8 @@
 普通用户浏览器客户端：受邀注册、登录即用、离线记录、多端接续。产品与前端设计见
 `docs/tasktips-web-design.md`，HTML 交互稿见 `design/`（`design/README.md`）。
 
-> 当前状态：P5 本地数据基础完成（Dexie 持久化、命名空间隔离、事务、恢复副本）。
+> 当前状态：P6 同步与冲突完成（Mock 服务端先行：bootstrap/pull/push、幂等、
+> 整对象冲突解决、退避、多标签页锁与广播；云端 sync 落地后换 HttpSync）。
 > 正式业务功能按任务计划逐步接入，设计文档 §12.2 为实施顺序依据。
 
 ## 技术框架
@@ -33,6 +34,8 @@ src/
   domain/       纯领域规则：标题派生/日期/色板/查询排序/分类校验（桌面端直译 + §4）
   content/      内容仓储抽象 + Dexie 实现 + demo 种子 + 快照/恢复副本/图片二进制
   editor/       双模式会话/自动保存/图片校验、Milkdown 即时与只读预览、CodeMirror 源码
+  sync/         同步引擎（状态机/冲突/退避/锁与广播）+ 字节序列化 + Mock 服务端
+  components/sync/  冲突处理视图
   stores/       Pinia：theme/session/ui/project/todos（查询状态）/classification（分类与回收站）
   styles/       base.css + theme.css（设计令牌）+ components.css（产品组件样式，类名对齐设计稿）
   api/          生成的契约类型 schema.d.ts（gitignore，由 generate:api 生成）
@@ -90,7 +93,10 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 - 注意：认证 Mock 经刷新仿真跨页恢复会话，内容仓储由 Dexie 持久化；
   E2E 覆盖整页刷新后内容保留。
 - P5 验收：命名空间隔离、同库新实例读取、事务回滚（非法快照不动现状）、
-  恢复副本上限保留、图片记录存取（单测 121 + e2e 26）。
+  恢复副本上限保留、图片记录存取。
+- P6 验收：首次上传/增量拉取、双端编辑冲突与双向解决、远端删除冲突、墓碑跨端、
+  幂等重试、单项拒绝、代次重建、退避与维护暂停、任务编辑锁只读（单测 147 + e2e 29）。
+- P6 边界：回收站本地保留不上传；分栏同步滚动为比例映射；MockSyncServer 替代真实云端。
 - P4 验收：即时↔分栏内容一致、跨模式撤销重做、输入法组合延后切换、400ms/2s 自动保存
   与序号回执、图片魔数校验与 Blob 展示、元数据与完成切换（单测 115 + e2e 25）。
 - 已知债务：分栏同步滚动为比例映射（设计稿行为），正式块映射待 P8 前补齐；

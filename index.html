@@ -7,8 +7,25 @@
     <!-- /app/ 为设计文档固定的部署路径（§11.2），public 资源用其绝对路径，dev/prod 一致 -->
     <link rel="icon" href="/app/favicon.svg" type="image/svg+xml" />
     <title>TaskTips Web</title>
-    <!-- 首帧主题底色：必须在样式绘制前同步执行 -->
-    <script src="/app/theme-boot.js"></script>
+    <!-- 首帧主题底色：内联以避免 base 路径改写问题；P8 CSP 需为其放行 sha256 哈希。
+         与 public/theme-boot.js 同源（桌面端移植），偏好键 tasktips:theme-preference。 -->
+    <script>
+      (function () {
+        var theme = "light";
+        try {
+          var cached = localStorage.getItem("tasktips:theme-preference");
+          if (cached === "light" || cached === "dark") {
+            theme = cached;
+          } else if (
+            cached !== "light" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches
+          ) {
+            theme = "dark";
+          }
+        } catch (e) {}
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
