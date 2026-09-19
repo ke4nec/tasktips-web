@@ -27,7 +27,8 @@ test("新建任务自动保存并落库", async ({ page }) => {
   await typeInInstant(page, "# E2E编辑标题\n\n正文第一行");
   // 落库即创建路由替换，是持久化成功的最强信号（保存标签 idle/已保存同文案）。
   await expect(page).toHaveURL(/\/app\/p\/demo\/todo\/t-/, { timeout: 15000 });
-  await expect(page.locator(".editor-titlebar h1")).toContainText("E2E编辑标题");
+  // 编辑器不再有独立标题栏（对齐设计稿）：标题即正文首行，仍在即时编辑区中。
+  await expect(page.locator(".editor-content .ProseMirror").first()).toContainText("E2E编辑标题");
 });
 
 test("即时→分栏→即时内容一致", async ({ page }) => {

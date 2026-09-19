@@ -6,10 +6,12 @@ import AppToast from "@/components/AppToast.vue";
 import AppSidebar from "@/components/layout/AppSidebar.vue";
 import AppTopbar from "@/components/layout/AppTopbar.vue";
 import CommandPalette from "@/components/layout/CommandPalette.vue";
+import { useUiStore } from "@/stores/ui";
 
 const props = defineProps<{ projectId: string }>();
 
 const route = useRoute();
+const ui = useUiStore();
 const navOpen = ref(false);
 const paletteOpen = ref(false);
 let toggleButton: HTMLElement | null = null;
@@ -52,7 +54,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKeydown));
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'nav-open': navOpen }">
+  <div class="app-shell" :class="{ 'nav-open': navOpen, 'focus-mode': ui.editorFocus }">
     <AppSidebar :project-id="props.projectId" @navigate="setNavOpen(false)" />
     <div class="app-main">
       <AppTopbar

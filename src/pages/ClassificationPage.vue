@@ -209,13 +209,12 @@ function goTab(next: "folders" | "tags") {
     </div>
 
     <template v-else-if="tab === 'folders'">
+      <!-- 空态不放 CTA：标题栏“新建目录”已覆盖入口（设计稿同款）。 -->
       <EmptyState
         v-if="classification.tree.length === 0"
         icon="folder"
         title="还没有自定义目录"
         description="先创建一个目录，未归类的任务仍保留在“未分类”中。"
-        action-label="新建目录"
-        @action="openFolder('create')"
       />
       <div v-else class="panel">
         <template v-for="level1 in classification.tree" :key="level1.id">
@@ -297,8 +296,6 @@ function goTab(next: "folders" | "tags") {
         icon="tag"
         title="还没有标签"
         description="添加标签，把不同目录中相关的任务串起来。"
-        action-label="新建标签"
-        @action="openTag('create')"
       />
       <section
         v-for="group in classification.tagGroups"

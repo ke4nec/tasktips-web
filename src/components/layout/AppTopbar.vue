@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import AppIcon from "@/components/AppIcon.vue";
 import IconButton from "@/components/IconButton.vue";
 import { viewDef } from "@/app/views";
 import { useProjectStore } from "@/stores/project";
-import { useSessionStore } from "@/stores/session";
 import { useThemeStore } from "@/stores/theme";
 import { useUiStore } from "@/stores/ui";
 
@@ -18,7 +17,6 @@ const emit = defineEmits<{
 
 const route = useRoute();
 const router = useRouter();
-const session = useSessionStore();
 const projects = useProjectStore();
 const theme = useThemeStore();
 const ui = useUiStore();
@@ -38,8 +36,6 @@ const position = computed(() => {
   if (route.name === "settings") return "设置";
   return "";
 });
-
-const accountInitial = computed(() => (session.account?.email ?? "本").slice(0, 1).toUpperCase());
 
 function toggleTheme() {
   theme.setPreference(theme.resolved === "dark" ? "light" : "dark");
@@ -73,7 +69,7 @@ function newTask() {
       <kbd>Ctrl K</kbd>
     </button>
     <button type="button" class="btn primary" @click="newTask">
-      <AppIcon name="plus" small />新建任务
+      <AppIcon name="plus" small />新建
     </button>
     <IconButton
       icon="sun"
@@ -81,11 +77,5 @@ function newTask() {
       :aria-pressed="theme.resolved === 'dark'"
       @click="toggleTheme"
     />
-    <RouterLink
-      :to="{ name: 'settings' }"
-      class="avatar"
-      :aria-label="`账号与设置，当前${accountInitial}`"
-      >{{ accountInitial }}</RouterLink
-    >
   </header>
 </template>

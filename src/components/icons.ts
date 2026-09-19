@@ -39,6 +39,10 @@ export const ICON_PATHS: Record<string, string> = {
   focus: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>',
   warning: '<path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5m0 3h.01"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',
+  filter:
+    '<path d="M4 5h16M7 12h10M10 19h4"/><circle cx="8" cy="5" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/>',
+  sort: '<path d="M8 4v16m-4-4 4 4 4-4M16 4h5m-5 6h4m-4 6h3"/>',
+  cloud: '<path d="M6 19a5 5 0 1 1-.7-10 7 7 0 0 1 13.5-1A5.5 5.5 0 0 1 18 19H6Z"/>',
 };
 
 export type IconName = keyof typeof ICON_PATHS;

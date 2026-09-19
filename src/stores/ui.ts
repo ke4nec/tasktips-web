@@ -1,10 +1,12 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-// 全局轻提示（对齐设计稿 toast：3.2s 自动消失，后一条覆盖前一条）。
+// 全局轻提示（对齐设计稿 toast：3.2s 自动消失，后一条覆盖前一条）+ 编辑器专注模式。
 export const useUiStore = defineStore("ui", () => {
   const toastMessage = ref("");
   const toastVisible = ref(false);
+  // 专注编辑时应用壳收起侧栏（design.css .focus-mode .sidebar）。
+  const editorFocus = ref(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   function notify(message: string) {
@@ -16,5 +18,5 @@ export const useUiStore = defineStore("ui", () => {
     }, 3200);
   }
 
-  return { toastMessage, toastVisible, notify };
+  return { toastMessage, toastVisible, editorFocus, notify };
 });

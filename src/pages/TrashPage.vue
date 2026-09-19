@@ -138,69 +138,109 @@ async function onConfirm() {
       description="删除后的内容会在这里保留 30 天。"
     />
 
-    <div v-else-if="tab === 'todo'" class="panel">
-      <div v-for="item in trash?.todos ?? []" :key="item.id" class="setting-row">
-        <span class="grow">
-          <h3>{{ item.name }}</h3>
-          <p>
-            删除于 {{ formatTimestamp(item.deletedAt) }} · 剩余
-            {{ remainingDays(item.deletedAt) }} 天
-            <span v-if="item.categoryPath?.length">· {{ item.categoryPath.join(" / ") }}</span>
-            <span v-if="item.tags?.length">· {{ item.tags.join("、") }}</span>
-          </p>
-        </span>
-        <span class="flex">
-          <button type="button" class="btn" @click="askRestore('todo', item.id, item.name)">
-            恢复
-          </button>
-          <button type="button" class="btn text" @click="askPurge('todo', item.id, item.name)">
-            彻底删除
-          </button>
-        </span>
-      </div>
+    <div v-else-if="tab === 'todo'" class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>任务</th>
+            <th>删除时间</th>
+            <th>剩余天数</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in trash?.todos ?? []" :key="item.id">
+            <td>
+              <strong style="font-weight: 500">{{ item.name }}</strong>
+              <div v-if="item.categoryPath?.length || item.tags?.length" class="muted">
+                <span v-if="item.categoryPath?.length">{{ item.categoryPath.join(" / ") }}</span>
+                <span v-if="item.categoryPath?.length && item.tags?.length"> · </span>
+                <span v-if="item.tags?.length">{{ item.tags.join("、") }}</span>
+              </div>
+            </td>
+            <td class="muted">{{ formatTimestamp(item.deletedAt) }}</td>
+            <td class="muted">{{ remainingDays(item.deletedAt) }} 天</td>
+            <td>
+              <button type="button" class="btn" @click="askRestore('todo', item.id, item.name)">
+                恢复
+              </button>
+              <button type="button" class="btn text" @click="askPurge('todo', item.id, item.name)">
+                彻底删除
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
-    <div v-else-if="tab === 'category'" class="panel">
-      <div v-for="item in trash?.categories ?? []" :key="item.id" class="setting-row">
-        <span class="grow">
-          <h3>{{ item.name }}</h3>
-          <p>
-            删除于 {{ formatTimestamp(item.deletedAt) }} · 剩余
-            {{ remainingDays(item.deletedAt) }} 天 · {{ item.subCategoryCount ?? 0 }} 个子目录、{{
-              item.trashedTodoCount ?? 0
-            }}
-            条任务
-          </p>
-        </span>
-        <span class="flex">
-          <button type="button" class="btn" @click="askRestore('category', item.id, item.name)">
-            恢复
-          </button>
-          <button type="button" class="btn text" @click="askPurge('category', item.id, item.name)">
-            彻底删除
-          </button>
-        </span>
-      </div>
+    <div v-else-if="tab === 'category'" class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>目录</th>
+            <th>删除时间</th>
+            <th>剩余天数</th>
+            <th>包含</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in trash?.categories ?? []" :key="item.id">
+            <td>
+              <strong style="font-weight: 500">{{ item.name }}</strong>
+            </td>
+            <td class="muted">{{ formatTimestamp(item.deletedAt) }}</td>
+            <td class="muted">{{ remainingDays(item.deletedAt) }} 天</td>
+            <td class="muted">
+              {{ item.subCategoryCount ?? 0 }} 个子目录 · {{ item.trashedTodoCount ?? 0 }} 条任务
+            </td>
+            <td>
+              <button type="button" class="btn" @click="askRestore('category', item.id, item.name)">
+                恢复
+              </button>
+              <button
+                type="button"
+                class="btn text"
+                @click="askPurge('category', item.id, item.name)"
+              >
+                彻底删除
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
-    <div v-else class="panel">
-      <div v-for="item in trash?.tags ?? []" :key="item.id" class="setting-row">
-        <span class="grow">
-          <h3>{{ item.name }}</h3>
-          <p>
-            删除于 {{ formatTimestamp(item.deletedAt) }} · 剩余
-            {{ remainingDays(item.deletedAt) }} 天 · {{ item.usageCount ?? 0 }} 条任务仍在引用
-          </p>
-        </span>
-        <span class="flex">
-          <button type="button" class="btn" @click="askRestore('tag', item.id, item.name)">
-            恢复
-          </button>
-          <button type="button" class="btn text" @click="askPurge('tag', item.id, item.name)">
-            彻底删除
-          </button>
-        </span>
-      </div>
+    <div v-else class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>标签</th>
+            <th>删除时间</th>
+            <th>剩余天数</th>
+            <th>引用</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in trash?.tags ?? []" :key="item.id">
+            <td>
+              <strong style="font-weight: 500">{{ item.name }}</strong>
+            </td>
+            <td class="muted">{{ formatTimestamp(item.deletedAt) }}</td>
+            <td class="muted">{{ remainingDays(item.deletedAt) }} 天</td>
+            <td class="muted">{{ item.usageCount ?? 0 }} 条任务仍在引用</td>
+            <td>
+              <button type="button" class="btn" @click="askRestore('tag', item.id, item.name)">
+                恢复
+              </button>
+              <button type="button" class="btn text" @click="askPurge('tag', item.id, item.name)">
+                彻底删除
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <AppDialog

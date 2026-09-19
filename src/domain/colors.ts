@@ -37,3 +37,44 @@ export const COLOR_PALETTE: ReadonlyArray<{ name: string; value: string }> = [
 export function isPaletteColor(value: string): boolean {
   return COLOR_PALETTE.some((entry) => entry.value.toLowerCase() === value.toLowerCase());
 }
+
+// 标签 pill 色调：把色板色值映射到设计稿的语义 pill 类（blue/green/purple/red/amber），
+// 未覆盖的色值回落到默认灰 pill。
+const PILL_TONES: ReadonlyArray<{ tone: string; values: ReadonlyArray<string> }> = [
+  {
+    tone: "blue",
+    values: ["#4a9eff", "#38bdf8", "#22d3ee", "#0284c7", "#1d4ed8", "#818cf8"],
+  },
+  {
+    tone: "green",
+    values: ["#6ccb5f", "#6ee7b7", "#34d399", "#a3e635", "#15803d", "#65a30d", "#0f766e"],
+  },
+  {
+    tone: "purple",
+    values: ["#a78bfa", "#c084fc", "#7c3aed", "#4338ca"],
+  },
+  {
+    tone: "red",
+    values: [
+      "#f97066",
+      "#ef4444",
+      "#dc2626",
+      "#b91c1c",
+      "#e05299",
+      "#ff8fab",
+      "#9d174d",
+      "#be123c",
+    ],
+  },
+  {
+    tone: "amber",
+    values: ["#fb923c", "#fbbf24", "#f97316", "#d97706", "#ca8a04"],
+  },
+];
+
+export function pillToneForColor(value: string | undefined): string {
+  if (!value) return "";
+  const target = value.toLowerCase();
+  const hit = PILL_TONES.find((entry) => entry.values.includes(target));
+  return hit ? hit.tone : "";
+}

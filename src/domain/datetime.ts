@@ -52,3 +52,13 @@ export function formatTimestamp(rfc3339: string): string {
 export function countChars(text: string): number {
   return [...text].length;
 }
+
+/** 页面副标题长日期：2026 年 9 月 18 日，星期五。 */
+export function formatLongDate(dateKey: string = todayLocal()): string {
+  const date = new Date(`${dateKey}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dateKey;
+  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日，星期${
+    weekdays[date.getDay()]
+  }`;
+}

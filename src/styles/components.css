@@ -369,12 +369,20 @@
   overflow: auto;
   flex: 1;
   min-height: 0;
+  /* 编辑器路由的 .editor-layout 依赖 flex:1 撑满剩余高度；列表页 .content 保持自然高度滚动。 */
+  display: flex;
+  flex-direction: column;
+}
+
+.main-scroll > * {
+  width: 100%;
 }
 
 .content {
   max-width: 1120px;
   padding: 35px 44px 56px;
   margin: 0 auto;
+  flex: none;
 }
 
 .content.narrow {
@@ -502,6 +510,280 @@
   background: transparent;
   font-size: 12px;
   padding: 7px 0;
+}
+
+/* 任务分组与任务行（design.css 同名规则）：行尾右对齐日期、红旗优先级、悬停显示操作。 */
+.list-group {
+  margin-top: 24px;
+}
+
+.list-group-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+.list-group-title .count {
+  color: var(--subtle);
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+
+.task-row:hover {
+  background: var(--sidebar);
+}
+
+.task-check {
+  appearance: none;
+  border: 1.5px solid #b7bfca;
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  cursor: pointer;
+  flex: none;
+  margin: 0;
+  background: transparent;
+}
+
+.task-check:checked {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.task-check:checked::after {
+  content: "";
+  display: block;
+  margin: 3px 0 0 5px;
+  width: 4px;
+  height: 7px;
+  border: solid var(--on-brand);
+  border-width: 0 1.7px 1.7px 0;
+  transform: rotate(45deg);
+}
+
+html[data-theme="dark"] .task-check {
+  border-color: var(--subtle);
+}
+
+.task-main {
+  min-width: 0;
+  flex: 1;
+  color: var(--text);
+  /* 实现为 button（设计稿为 a）：清除按钮默认内边距与居中。 */
+  padding: 0;
+  text-align: left;
+}
+
+.task-title {
+  font-size: 13px;
+  font-weight: 500;
+  display: block;
+  margin-bottom: 5px;
+}
+
+.task-subtitle {
+  font-size: 11px;
+  color: var(--subtle);
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.task-subtitle .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.task-row.done .task-title {
+  color: var(--subtle);
+  text-decoration: line-through;
+}
+
+.task-row .task-date {
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--muted);
+  min-width: 45px;
+  text-align: right;
+}
+
+.task-row .task-date.overdue {
+  color: var(--red);
+}
+
+.task-row .priority {
+  color: var(--red);
+}
+
+.task-row .priority .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.task-row .task-menu {
+  opacity: 0;
+}
+
+.task-row:hover .task-menu,
+.task-row:focus-within .task-menu {
+  opacity: 1;
+}
+
+.add-task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  width: 100%;
+  font-size: 12px;
+  text-align: left;
+  margin: 14px 0 0;
+  padding: 10px 4px;
+}
+
+.add-task:hover {
+  color: var(--brand);
+}
+
+.bottom-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--subtle);
+  padding: 28px 0 10px;
+}
+
+/* 目录与标签管理（design.css 同名规则）。 */
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 17px 22px;
+  border-top: 1px solid var(--line);
+}
+
+.folder-row:first-child {
+  border-top: 0;
+}
+
+.folder-row.indent {
+  padding-left: 53px;
+}
+
+.folder-row.indent-2 {
+  padding-left: 82px;
+}
+
+.folder-row .folder-icon {
+  padding: 9px;
+  background: var(--brand-soft);
+  border-radius: 8px;
+  color: var(--brand);
+}
+
+.folder-row strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.folder-row p {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.tag-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.tag-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 17px;
+  background: var(--panel);
+}
+
+.tag-card h3 {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tag-card .icon-btn {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+}
+
+.tag-card p {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 18px;
+}
+
+.color-swatch {
+  width: 19px;
+  height: 19px;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.color-swatch[aria-pressed="true"] {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* 数据表（回收站等，design.css 同名规则）。 */
+.table-wrap {
+  overflow-x: auto;
+}
+
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+.data-table th {
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--sidebar);
+  padding: 12px 18px;
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 16px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.data-table td .muted,
+.data-table td.muted {
+  font-size: 11px;
+}
+
+.data-table .btn {
+  min-height: 29px;
+  font-size: 11px;
 }
 
 .segmented {
@@ -890,6 +1172,47 @@
   transform: translateY(-2px);
 }
 
+.project-card .feature-icon {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.project-card .card-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 28px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--subtle);
+}
+
+.project-card.new {
+  border-style: dashed;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  background: transparent;
+  min-height: 244px;
+  color: var(--muted);
+}
+
+.project-card.new .feature-icon {
+  margin: 0;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.project-card.new h3 {
+  font-size: 14px;
+}
+
+.project-card.new p {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 dialog {
   padding: 0;
   width: min(480px, calc(100vw - 32px));
@@ -1097,6 +1420,81 @@ dialog::backdrop {
     max-width: 235px;
   }
 
+  .summary-strip {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .summary-item {
+    font-size: 10px;
+  }
+
+  .summary-value {
+    font-size: 23px;
+    margin-right: 5px;
+  }
+
+  .summary-strip .progress-ring,
+  .summary-strip .summary-note {
+    display: none;
+  }
+
+  .task-row {
+    gap: 10px;
+    padding: 15px 0;
+  }
+
+  .task-row .task-menu {
+    display: none;
+  }
+
+  .task-title {
+    font-size: 12px;
+  }
+
+  .task-row .priority {
+    display: none;
+  }
+
+  .task-row .task-date {
+    font-size: 10px;
+    min-width: 37px;
+  }
+
+  .task-subtitle {
+    font-size: 10px;
+    gap: 5px;
+  }
+
+  .task-subtitle .pill {
+    font-size: 9px;
+  }
+
+  .folder-row {
+    padding: 14px 15px;
+    gap: 8px;
+  }
+
+  .folder-row.indent {
+    padding-left: 35px;
+  }
+
+  .folder-row.indent-2 {
+    padding-left: 55px;
+  }
+
+  .folder-row .folder-icon {
+    padding: 6px;
+  }
+
+  .folder-row .icon-btn {
+    min-width: 28px;
+  }
+
+  .tag-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .two-col,
   .three-col {
     grid-template-columns: 1fr;
@@ -1197,6 +1595,14 @@ dialog::backdrop {
   border-radius: 7px;
 }
 
+.editor-task-list .task-row:hover {
+  background: var(--hover);
+}
+
+.editor-task-list .task-row.selected {
+  background: var(--brand-soft);
+}
+
 .editor-task-list .task-row .task-date,
 .editor-task-list .task-row .task-menu,
 .editor-task-list .task-row .priority {
@@ -1237,24 +1643,8 @@ dialog::backdrop {
   color: var(--red);
 }
 
-.editor-titlebar {
-  padding: 21px 34px 5px;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.editor-titlebar h1 {
-  font-size: 22px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .editor-meta {
-  padding: 15px 34px;
+  padding: 21px 34px 15px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -1378,15 +1768,12 @@ dialog::backdrop {
   padding: 7px 20px;
 }
 
-.split-options {
-  padding: 6px 22px;
-  border-top: 1px solid var(--line);
-  font-size: 11px;
-  color: var(--muted);
+.focus-mode .sidebar {
+  display: none;
 }
 
-.split-options button[aria-pressed="true"] {
-  color: var(--brand);
+.focus-mode.app-shell {
+  grid-template-columns: 1fr;
 }
 
 .focus-mode .editor-task-list {
@@ -1399,6 +1786,12 @@ dialog::backdrop {
 
 .focus-mode .editor-meta {
   padding-left: 45px;
+}
+
+.focus-mode .editor-content {
+  max-width: 880px;
+  width: 100%;
+  align-self: center;
 }
 
 @container (max-width: 719px) {
@@ -1446,7 +1839,7 @@ dialog::backdrop {
   }
 
   .editor-meta {
-    padding: 15px 19px 12px;
+    padding: 17px 19px 12px;
   }
 
   .format-toolbar {
@@ -1465,14 +1858,6 @@ dialog::backdrop {
   .editor-footer {
     padding: 8px 15px;
     font-size: 9px;
-  }
-
-  .editor-titlebar {
-    padding: 17px 19px 5px;
-  }
-
-  .editor-titlebar h1 {
-    font-size: 19px;
   }
 }
 
@@ -1549,13 +1934,7 @@ dialog::backdrop {
   place-items: center;
   font-size: 9px;
   color: var(--brand);
-  animation: spin 1.2s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  flex: none;
 }
 
 .step-row {
@@ -1596,7 +1975,8 @@ dialog::backdrop {
 }
 
 /* 设备行与存储分区（设计文档 §8、§10）。 */
-.device-icon {
+.device-icon,
+.feature-icon {
   display: grid;
   place-items: center;
   width: 46px;
@@ -1607,7 +1987,8 @@ dialog::backdrop {
   flex: none;
 }
 
-.device-icon .icon {
+.device-icon .icon,
+.feature-icon .icon {
   width: 24px;
   height: 24px;
 }

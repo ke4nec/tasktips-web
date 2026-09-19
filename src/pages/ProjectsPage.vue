@@ -101,12 +101,9 @@ async function onLogoutConfirm(choice: LogoutChoice) {
     <div class="project-content">
       <div class="page-heading">
         <div>
-          <h1>项目空间</h1>
+          <h1>从一个空间开始</h1>
           <p>项目之间内容独立，切换前会持久化当前编辑。</p>
         </div>
-        <button type="button" class="btn primary" @click="openCreate">
-          <AppIcon name="plus" small />新建项目
-        </button>
       </div>
       <p v-if="loadError" class="field-error" role="alert">
         {{ loadError }} <button type="button" class="btn text" @click="reload">重试</button>
@@ -125,20 +122,26 @@ async function onLogoutConfirm(choice: LogoutChoice) {
         @action="openCreate"
       />
       <div v-else class="three-col">
-        <div v-for="project in projects.projects" :key="project.id" class="project-card">
-          <button type="button" class="card-main" @click="enter(project.id)">
-            <h2>{{ project.name }}</h2>
-            <p>点击进入工作台</p>
-          </button>
-          <span class="card-foot">
-            <span>独立本地分区</span>
+        <article v-for="project in projects.projects" :key="project.id" class="project-card">
+          <div class="between">
+            <span class="feature-icon"><AppIcon name="folder" /></span>
             <IconButton
               icon="edit"
               :label="`重命名项目 ${project.name}`"
               @click="openRename(project.id, project.name)"
             />
-          </span>
-        </div>
+          </div>
+          <button type="button" class="card-main" @click="enter(project.id)">
+            <h2>{{ project.name }}</h2>
+            <p>工作、生活与日常灵感</p>
+            <div class="card-foot"><span>私人项目 · 独立本地分区</span></div>
+          </button>
+        </article>
+        <button type="button" class="project-card new" @click="openCreate">
+          <span class="feature-icon"><AppIcon name="plus" /></span>
+          <h3>新建项目</h3>
+          <p>为不同的事情留出独立空间</p>
+        </button>
       </div>
     </div>
 
@@ -182,7 +185,9 @@ async function onLogoutConfirm(choice: LogoutChoice) {
 .card-main {
   text-align: left;
   flex: 1;
+  margin-top: 22px;
   padding: 0;
+  color: inherit;
 }
 
 .card-main h2 {
@@ -193,16 +198,5 @@ async function onLogoutConfirm(choice: LogoutChoice) {
 .card-main p {
   font-size: 11px;
   color: var(--muted);
-}
-
-.card-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 28px;
-  padding-top: 15px;
-  border-top: 1px solid var(--line);
-  font-size: 10px;
-  color: var(--subtle);
 }
 </style>

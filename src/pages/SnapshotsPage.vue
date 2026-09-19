@@ -147,8 +147,6 @@ function goConflicts() {
       icon="history"
       title="还没有项目快照"
       description="创建一个快照，为当前进度留一个恢复时间点。"
-      action-label="创建快照"
-      @action="createOpen = true"
     />
 
     <div v-if="restoring" class="panel" style="margin-bottom: 24px">

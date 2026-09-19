@@ -8,10 +8,11 @@ import EmptyState from "@/components/EmptyState.vue";
 import IconButton from "@/components/IconButton.vue";
 import TodoRow from "@/components/list/TodoRow.vue";
 import { content } from "@/content";
-import { deriveTitle } from "@/domain/title";
+import { formatDueDate, formatLongDate } from "@/domain/datetime";
 import { tryAcquireTaskLock } from "@/sync/locks";
 import type { Todo, TodoView } from "@/domain/types";
 import { altFromFileName, imagePath, storeImageBlob, validateImageFile } from "@/editor/images";
+import { viewDef } from "@/app/views";
 import MilkdownDoc from "@/editor/MilkdownDoc.vue";
 import type { MilkdownCommand } from "@/editor/MilkdownInner.vue";
 import { EditorSession, loadPrefs, savePrefs, type EditorMode } from "@/editor/session";
@@ -64,6 +65,10 @@ const mode = ref<EditorMode>(prefs.value.mode);
 const ratio = ref(prefs.value.ratio);
 const syncScroll = ref(prefs.value.syncScroll);
 const focusMode = ref(false);
+// 专注模式需要收起应用壳侧栏，状态放 ui store 供 AppShell 读取（design.css .focus-mode）。
+watch(focusMode, (value) => {
+  ui.editorFocus = value;
+});
 
 const session = shallowRef<EditorSession | null>(null);
 const instantRef = ref<InstanceType<typeof MilkdownDoc> | null>(null);
@@ -82,8 +87,13 @@ const linkUrl = ref("");
 const fileInput = ref<HTMLInputElement | null>(null);
 const showSaveError = computed(() => session.value?.saveState.value === "error");
 
-const title = computed(
-  () => deriveTitle(session.value?.text.value ?? todo.value?.body ?? "") || "未命名 Todo",
+const wordCount = computed(() => `${[...(session.value?.text.value ?? "")].length} 字符`);
+
+const contextView = computed(() => viewDef(fromView.value)?.title ?? "任务");
+const currentTodoId = computed(() => createdId.value ?? todoId.value);
+// 列表行日期徽标：今天/明天/过期 N 天，否则原样。
+const dueLabel = computed(() =>
+  todo.value?.dueDate ? formatDueDate(todo.value.dueDate) : "截止日期",
 );
 const saveLabel = computed(() => {
   switch (session.value?.saveState.value) {
@@ -97,7 +107,6 @@ const saveLabel = computed(() => {
       return "已保存到本机";
   }
 });
-const wordCount = computed(() => `${[...(session.value?.text.value ?? "")].length} 字符`);
 
 function persistPrefs() {
   prefs.value = { mode: mode.value, ratio: ratio.value, syncScroll: syncScroll.value };
@@ -145,6 +154,9 @@ async function loadTodo() {
   loading.value = true;
   loadError.value = "";
   try {
+    // 同组件切换任务（编辑器列表行点击）只触发参数更新守卫，不触发路由离开守卫；
+    // 先冲刷上一个会话防抖窗口内的输入，再加载新任务（§5.3 不丢未保存内容）。
+    await session.value?.flushPersist();
     const results = await Promise.allSettled([
       todos.load(projectId.value),
       classification.load(projectId.value),
@@ -447,6 +459,14 @@ function goBack() {
   });
 }
 
+function goNew() {
+  router.push({
+    name: "todo-detail",
+    params: { projectId: projectId.value, todoId: "new" },
+    query: { from: fromView.value },
+  });
+}
+
 // 站内导航不得丢弃未持久化内容（§5.3）；空草稿直接丢弃。
 onBeforeRouteLeave(async () => {
   if (!session.value) return true;
@@ -484,6 +504,7 @@ onBeforeUnmount(() => {
   clearTimeout(previewTimer);
   releaseLock?.();
   releaseLock = null;
+  ui.editorFocus = false;
 });
 
 const contextTodos = computed(() => todos.results(fromView.value as TodoView));
@@ -494,11 +515,19 @@ if (import.meta.env.DEV) console.log("[editor-debug] EditorPage setup", todoId.v
 <template>
   <div class="editor-layout" :class="{ 'focus-mode': focusMode }">
     <div class="editor-task-list" aria-label="当前视图任务">
+      <div class="between">
+        <h2>
+          {{ contextView }} <span class="muted small">{{ contextTodos.length }}</span>
+        </h2>
+        <IconButton icon="plus" label="新建任务" @click="goNew" />
+      </div>
+      <p class="muted small" style="margin: 8px 0 18px">{{ formatLongDate() }}</p>
       <TodoRow
         v-for="item in contextTodos.slice(0, 30)"
         :key="item.id"
         :todo="item"
         :project-id="projectId"
+        :selected="item.id === currentTodoId"
       />
     </div>
 
@@ -557,32 +586,31 @@ if (import.meta.env.DEV) console.log("[editor-debug] EditorPage setup", todoId.v
           这条任务正在另一个标签页中编辑。当前页面为只读。
         </div>
 
-        <div class="editor-titlebar">
-          <h1>{{ title }}</h1>
+        <div class="editor-meta">
           <button
             type="button"
-            class="btn"
-            :class="todo?.status === 'completed' ? 'green' : ''"
+            class="meta-chip"
+            :class="{ green: todo?.status === 'completed' }"
             :aria-pressed="todo?.status === 'completed'"
             :disabled="!todo || readonlyLock"
             @click="toggleComplete"
           >
-            {{ todo?.status === "completed" ? "已完成 · 重新打开" : "标记完成" }}
+            <AppIcon name="circle-check" />{{
+              todo?.status === "completed" ? "已完成 · 重新打开" : "标记完成"
+            }}
           </button>
-        </div>
-
-        <div class="editor-meta">
           <button
             type="button"
             class="meta-chip"
             :disabled="readonlyLock"
             @click="openMeta('date')"
           >
-            <AppIcon name="calendar" />{{ todo?.dueDate ?? "截止日期" }}
+            <AppIcon name="calendar" />{{ dueLabel }}
           </button>
           <button
             type="button"
             class="meta-chip"
+            :class="{ red: todo?.priority === 3 }"
             :disabled="readonlyLock"
             @click="openMeta('priority')"
           >
@@ -605,6 +633,7 @@ if (import.meta.env.DEV) console.log("[editor-debug] EditorPage setup", todoId.v
           <button
             type="button"
             class="meta-chip"
+            :class="{ blue: (todo?.tags.length ?? 0) > 0 }"
             :disabled="readonlyLock"
             @click="openMeta('tags')"
           >
@@ -697,6 +726,18 @@ if (import.meta.env.DEV) console.log("[editor-debug] EditorPage setup", todoId.v
             accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
             @change="onImageFileChange"
           />
+          <template v-if="mode === 'split'">
+            <span class="spacer"></span>
+            <button
+              type="button"
+              class="small muted"
+              :aria-pressed="syncScroll"
+              title="切换分栏同步滚动"
+              @click="onSyncScrollToggle"
+            >
+              同步滚动 {{ syncScroll ? "✓" : "−" }}
+            </button>
+          </template>
         </div>
 
         <div v-if="showSaveError" class="notice danger">
@@ -737,11 +778,6 @@ if (import.meta.env.DEV) console.log("[editor-debug] EditorPage setup", todoId.v
             @redo="onRedo"
             @composing="onComposing"
           />
-          <div class="split-options">
-            <button type="button" :aria-pressed="syncScroll" @click="onSyncScrollToggle">
-              同步滚动 {{ syncScroll ? "✓" : "−" }}
-            </button>
-          </div>
         </div>
 
         <div class="editor-footer">

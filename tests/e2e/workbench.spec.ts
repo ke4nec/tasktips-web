@@ -68,7 +68,7 @@ test("目录新建与删除进回收站", async ({ page }) => {
 test("回收站恢复种子任务", async ({ page }) => {
   await page.goto("/app/p/demo/trash");
   await expect(page.getByText("旧的草稿")).toBeVisible();
-  const row = page.locator(".setting-row", { hasText: "旧的草稿" });
+  const row = page.locator(".data-table tbody tr", { hasText: "旧的草稿" });
   await row.getByRole("button", { name: "恢复" }).click();
   await page.getByRole("button", { name: "确认" }).click();
   await expect(page.getByText("旧的草稿")).toHaveCount(0);

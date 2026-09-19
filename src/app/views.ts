@@ -10,10 +10,25 @@ export interface ViewDef {
 
 export const PROJECT_VIEWS: ViewDef[] = [
   { id: "today", title: "今日", description: "过期与今天到期的未完成任务", icon: "calendar" },
-  { id: "inbox", title: "收件箱", description: "全部未完成任务", icon: "inbox" },
-  { id: "upcoming", title: "即将到期", description: "未来有截止日期的未完成任务", icon: "history" },
-  { id: "all", title: "全部任务", description: "已完成与未完成共存", icon: "list" },
-  { id: "completed", title: "已完成", description: "按完成日期分组", icon: "circle-check" },
+  {
+    id: "inbox",
+    title: "收件箱",
+    description: "把待办放在这里，再一件件从容完成。",
+    icon: "inbox",
+  },
+  {
+    id: "upcoming",
+    title: "即将到期",
+    description: "为接下来的日子，留一点准备的时间。",
+    icon: "history",
+  },
+  { id: "all", title: "全部任务", description: "任务、记录与灵感，都在这里。", icon: "list" },
+  {
+    id: "completed",
+    title: "已完成",
+    description: "每一件完成的小事，都值得被看见。",
+    icon: "circle-check",
+  },
 ];
 
 export const VIEW_IDS = PROJECT_VIEWS.map((view) => view.id);
