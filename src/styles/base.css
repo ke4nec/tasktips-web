@@ -1,0 +1,10 @@
+/* P0 基座样式：完整设计令牌在 P1 设计系统阶段从桌面端迁移并对齐设计稿。 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
