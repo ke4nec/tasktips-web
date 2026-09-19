@@ -466,12 +466,21 @@ function onVisibilityChange() {
   if (document.visibilityState === "hidden") onVisibilityHidden();
 }
 
+function onFlushEditors() {
+  // 版本更新前的保存刷新与页面卸载尽力刷新（正确性不依赖回调 §5.3）。
+  if (session.value) void session.value.flushPersist();
+}
+
 onMounted(() => {
   document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("tasktips:flush-editors", onFlushEditors);
+  window.addEventListener("beforeunload", onFlushEditors);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibilityChange);
+  window.removeEventListener("tasktips:flush-editors", onFlushEditors);
+  window.removeEventListener("beforeunload", onFlushEditors);
   clearTimeout(previewTimer);
   releaseLock?.();
   releaseLock = null;

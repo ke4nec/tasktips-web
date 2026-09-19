@@ -1,0 +1,47 @@
+# TaskTips Web 同源部署示例（设计文档 §11.2）。
+#
+# - `/app/` 托管本仓库构建产物（npm run build → dist/），history fallback 仅限 /app/ 内。
+# - `/api/` 反向代理后端；`/admin/` 保持管理后台；根路径 `/` 重定向 `/app/`。
+# - 生产要求 HTTPS（Caddy 自动证书）；开发用 localhost + Vite 代理（端口 5174）。
+# - TASKTIPS_WEB_ORIGIN 必须与浏览器实际 origin 一致（后端校验，见 tasktips-cloud）。
+#
+# 用法：替换 {$DOMAIN} 与后端地址后，与现有 tasktips-cloud/deploy/Caddyfile 合并。
+
+{$DOMAIN} {
+	redir / /app/ 308
+
+	handle /api/* {
+		reverse_proxy tasktips-api:18080
+	}
+
+	handle_path /admin/* {
+		reverse_proxy tasktips-admin:8080
+	}
+
+	handle /app/* {
+		root * /srv/tasktips-web
+		uri strip_prefix /app
+		file_server
+
+		# Web history fallback：只在 /app/ 内生效，不吞 API 404。
+		handle {
+			try_files {path} /index.html
+		}
+	}
+
+	handle /health/* {
+		respond "ok" 200
+	}
+
+	# 安全头：脚本仅本站 + 内联主题引导哈希；Milkdown/CodeMirror 运行时样式需
+	# style-src 'unsafe-inline'（取舍见 README）；图片仅本站与 Blob。
+	# 内联引导脚本哈希变更时同步更新（生成命令见下方注释）。
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-b/XM5jRsCiecT9sQztRFt/dIv6Gj22FtfxAlY/lotn0='; style-src 'self' 'unsafe-inline'; img-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+	}
+}
+
+# 内联引导脚本哈希生成（index.html 改动后重算）：
+#   python3 -c "import re,hashlib,base64; t=open('index.html').read(); m=re.search(r'<script>\n(.*?)\n    </script>', t, re.S); print('sha256-'+base64.b64encode(hashlib.sha256((m.group(1)+chr(10)).encode()).digest()).decode())"

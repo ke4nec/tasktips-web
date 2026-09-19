@@ -135,6 +135,9 @@ export class SyncEngine {
       if (!manual && state.submitPaused) {
         return this.describe(state);
       }
+      if (!manual && !state.autoSync) {
+        return this.describe(state);
+      }
       try {
         if (!state.bootstrapped) {
           await this.bootstrap(state, epoch);
@@ -294,12 +297,16 @@ export class SyncEngine {
       }
       payloads.set(changeKey(change), data);
     }
+    // 本页任务一次读出，逐项比对不再全表扫描（大列表性能）。
+    const todoMap = new Map(
+      (await this.deps.content.listTodos(this.deps.projectId)).map((todo) => [todo.id, todo]),
+    );
     for (const change of changes) {
       if (isTombstone(change)) {
-        await this.applyTombstone(state, change);
+        await this.applyTombstone(state, change, todoMap);
       } else {
         const data = payloads.get(changeKey(change)) as string | ArrayBuffer;
-        await this.applyObject(state, change, data, isBootstrap);
+        await this.applyObject(state, change, data, isBootstrap, todoMap);
       }
     }
     await this.saveState();
@@ -310,10 +317,11 @@ export class SyncEngine {
     envelope: ObjectEnvelope,
     data: string | ArrayBuffer,
     isBootstrap: boolean,
+    todoMap: Map<string, Todo>,
   ): Promise<void> {
     const key = changeKey(envelope);
     const base = state.baselines[key];
-    const raw = await this.readLocal(envelope.kind, envelope.id);
+    const raw = await this.readLocal(envelope.kind, envelope.id, todoMap);
     // 演示种子非用户意图：无基线时视为缺席，直接采用远端（§7.2 种子仅为本地演示）。
     const local = raw !== null && (raw as Todo).seeded === true && !base ? null : raw;
     const localHash = local ? await this.hashLocal(envelope.kind, local) : null;
@@ -363,10 +371,14 @@ export class SyncEngine {
     this.clearIssue(state, key);
   }
 
-  private async applyTombstone(state: SyncStateData, tomb: Tombstone): Promise<void> {
+  private async applyTombstone(
+    state: SyncStateData,
+    tomb: Tombstone,
+    todoMap: Map<string, Todo>,
+  ): Promise<void> {
     const key = `${tomb.kind}/${tomb.id}`;
     const base = state.baselines[key];
-    const raw = await this.readLocal(tomb.kind, tomb.id);
+    const raw = await this.readLocal(tomb.kind, tomb.id, todoMap);
     const local = raw !== null && (raw as Todo).seeded === true && !base ? null : raw;
     if (local !== null) {
       const localHash = await this.hashLocal(tomb.kind, local);
@@ -772,8 +784,10 @@ export class SyncEngine {
   private async readLocal(
     kind: SyncKind,
     id: string,
+    todoMap?: Map<string, Todo>,
   ): Promise<Todo | { raw: string } | Blob | null> {
     if (kind === "todo") {
+      if (todoMap) return todoMap.get(id) ?? null;
       const todos = await this.deps.content.listTodos(this.deps.projectId);
       return todos.find((item) => item.id === id) ?? null;
     }

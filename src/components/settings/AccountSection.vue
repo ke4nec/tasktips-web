@@ -6,7 +6,7 @@ import LogoutDialog, { type LogoutChoice } from "@/components/LogoutDialog.vue";
 import { confirmPasswordIssue, passwordIssue, requiredIssue } from "@/app/validation";
 import { ApiError } from "@/api/types";
 import { api } from "@/api";
-import { content } from "@/content";
+import { performLogout } from "@/app/logout";
 import { useSessionStore } from "@/stores/session";
 import { useSyncStore } from "@/stores/sync";
 import { useUiStore } from "@/stores/ui";
@@ -61,12 +61,7 @@ async function openLogout() {
 
 async function onLogoutConfirm(choice: LogoutChoice) {
   logoutOpen.value = false;
-  if (choice === "sync" && sync.currentProjectId) {
-    await sync.syncNowManual(sync.currentProjectId).catch(() => undefined);
-  }
-  const email = session.account?.email;
-  await session.logout();
-  if (email) await content.clearUserData(email).catch(() => undefined);
+  await performLogout(choice, sync.currentProjectId || undefined);
   await router.push({ name: "login" });
 }
 </script>
@@ -82,7 +77,7 @@ async function onLogoutConfirm(choice: LogoutChoice) {
         <span class="pill green">已验证</span>
       </div>
     </div>
-    <form class="panel" @submit.prevent="submit" novalidate>
+    <form class="panel" novalidate @submit.prevent="submit">
       <div class="panel-head">
         <h3>修改密码</h3>
         <p>成功后本机与其它设备都需要重新登录。</p>

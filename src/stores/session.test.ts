@@ -1,8 +1,9 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DEMO_EMAIL } from "@/api/mock";
-import { DEVICE_ID_PREFIX, useSessionStore } from "@/stores/session";
+import { DEMO_EMAIL, MockApi } from "@/api/mock";
+import { ApiError } from "@/api/types";
+import { DEVICE_ID_PREFIX, PENDING_LOGOUT_KEY, useSessionStore } from "@/stores/session";
 import { useUiStore } from "@/stores/ui";
 
 describe("浏览器会话（MockApi）", () => {
@@ -40,6 +41,20 @@ describe("浏览器会话（MockApi）", () => {
       code: "INVALID_CREDENTIALS",
     });
     expect(session.isAuthenticated).toBe(false);
+  });
+
+  it("离线退出挂起远端注销，恢复时补执行", async () => {
+    const session = useSessionStore();
+    await session.mockLoginQuick();
+    const logoutSpy = vi.spyOn(MockApi.prototype, "logout");
+    logoutSpy.mockRejectedValueOnce(new ApiError("NETWORK_ERROR", "断网"));
+    await session.logout();
+    expect(localStorage.getItem(PENDING_LOGOUT_KEY)).toBe("1");
+    expect(session.isAuthenticated).toBe(false);
+    logoutSpy.mockRestore();
+    await session.restoreSession();
+    expect(localStorage.getItem(PENDING_LOGOUT_KEY)).toBeNull();
+    expect(session.isAuthenticated).toBe(true);
   });
 
   it("退出后清理内存会话与上次项目", async () => {

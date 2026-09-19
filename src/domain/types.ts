@@ -18,6 +18,8 @@ export interface Todo {
   completedAt?: string;
   deletedAt?: string; // 置位即在回收站
   revision: number;
+  /** 创建设备（§7.1 保留创建设备；同步提交设备另行传递，不覆盖此字段）。 */
+  deviceId?: string;
   /** 本机演示种子标记（仅本地意，不同步不序列化）；任何用户修改后清除。 */
   seeded?: boolean;
 }

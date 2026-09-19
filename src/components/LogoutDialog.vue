@@ -43,7 +43,7 @@ watch(
       <label for="logout-choice">未同步内容</label>
       <select id="logout-choice" v-model="choice">
         <option value="sync">同步后退出</option>
-        <option value="export" disabled>导出后退出（P7 接入备份）</option>
+        <option value="export">导出后退出</option>
         <option value="discard">丢弃未同步修改并退出</option>
       </select>
     </div>

@@ -48,9 +48,30 @@ interface RestoreRecord extends RestoreInfo {
 
 const PAGE_LIMIT_MAX = 500;
 
+const MOCK_SERVER_KEY = "tasktips:mock-server";
+
+function encodeBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index++) {
+    binary += String.fromCharCode(bytes[index]);
+  }
+  return btoa(binary);
+}
+
+function decodeBase64(text: string): ArrayBuffer {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
 // 内存云端：实现 bootstrap/pull/push/幂等/冲突/-generation 语义，
 // 供同步引擎先行联调（对照移动端 StubServer 思路）。
-// 云端真实实现落地后由 HttpSync 替换，引擎代码不变。
+// 状态经 localStorage 跨页面加载持久（模拟真实云端；E2E 整页刷新依赖此语义）。
+// 清空站点数据即重置。云端真实实现落地后由 HttpSync 替换，引擎代码不变。
 export class MockSyncServer implements SyncServerPort {
   private projects = new Map<string, ProjectState>();
   /** 可注入失败：() => 抛错（网络/限流/维护等场景测试）。 */
@@ -59,6 +80,94 @@ export class MockSyncServer implements SyncServerPort {
   failPushNext: (() => Error) | null = null;
   /** 强制拒绝指定对象（超限/不支持场景测试）：命中一次后清除。 */
   forceReject: { kind: string; id: string; code: string } | null = null;
+
+  constructor() {
+    this.restore();
+  }
+
+  private persist() {
+    try {
+      const projects: Record<string, unknown> = {};
+      for (const [pid, state] of this.projects) {
+        projects[pid] = {
+          generation: state.generation,
+          objects: [...state.objects.entries()],
+          tombstones: [...state.tombstones.entries()],
+          order: state.order,
+          requests: [...state.requests.entries()],
+          sequence: state.sequence,
+          history: state.history,
+          snapshots: state.snapshots,
+          restores: state.restores,
+        };
+      }
+      const payloads: Record<string, { text?: string; bin?: string }> = {};
+      for (const [hash, data] of this.payloads) {
+        if (typeof data === "string") {
+          payloads[hash] = { text: data };
+        } else {
+          payloads[hash] = { bin: encodeBase64(data) };
+        }
+      }
+      localStorage.setItem(MOCK_SERVER_KEY, JSON.stringify({ projects, payloads }));
+    } catch {
+      // 配额不足时退化为纯内存（本次会话仍可用）
+    }
+  }
+
+  private restore() {
+    try {
+      const raw = localStorage.getItem(MOCK_SERVER_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        projects?: Record<
+          string,
+          {
+            generation: number;
+            objects: [string, ServerObject][];
+            tombstones: [string, ServerTombstone][];
+            order: string[];
+            requests: [string, PushItemResult[]][];
+            sequence: number;
+            history: HistoryEntry[];
+            snapshots: SnapshotRecord[];
+            restores: RestoreRecord[];
+          }
+        >;
+        payloads?: Record<string, { text?: string; bin?: string }>;
+      };
+      if (!parsed || typeof parsed !== "object") return;
+      for (const [pid, state] of Object.entries(parsed.projects ?? {})) {
+        this.projects.set(pid, {
+          generation: state.generation,
+          objects: new Map(state.objects),
+          tombstones: new Map(state.tombstones),
+          order: state.order,
+          requests: new Map(state.requests),
+          sequence: state.sequence,
+          history: state.history,
+          snapshots: state.snapshots,
+          restores: state.restores,
+        });
+      }
+      for (const [hash, data] of Object.entries(parsed.payloads ?? {})) {
+        this.payloads.set(hash, data.text ?? decodeBase64(data.bin ?? ""));
+      }
+    } catch {
+      // 损坏时从空开始
+    }
+  }
+
+  /** 测试/开发：清空持久化的 Mock 服务端。 */
+  reset() {
+    this.projects.clear();
+    this.payloads.clear();
+    try {
+      localStorage.removeItem(MOCK_SERVER_KEY);
+    } catch {
+      // 忽略
+    }
+  }
 
   private stateOf(projectId: string): ProjectState {
     let state = this.projects.get(projectId);
@@ -227,6 +336,7 @@ export class MockSyncServer implements SyncServerPort {
       request.requestId,
       results.map((item) => ({ ...item })),
     );
+    this.persist();
     return { results };
   }
 
@@ -238,6 +348,7 @@ export class MockSyncServer implements SyncServerPort {
 
   async putPayload(hash: string, data: string | ArrayBuffer): Promise<void> {
     this.payloads.set(hash, data);
+    this.persist();
   }
 
   async getPayload(hash: string): Promise<string | ArrayBuffer | null> {
@@ -255,6 +366,7 @@ export class MockSyncServer implements SyncServerPort {
     state.objects.set(key, { revision, hash });
     if (!state.order.includes(key)) state.order.push(key);
     this.record(state, kind, id, revision, hash, false);
+    this.persist();
   }
 
   /** 模拟远端删除。 */
@@ -267,11 +379,13 @@ export class MockSyncServer implements SyncServerPort {
     state.tombstones.set(key, { revision, deletedAt: new Date().toISOString() });
     if (!state.order.includes(key)) state.order.push(key);
     this.record(state, kind, id, revision, undefined, true);
+    this.persist();
   }
 
   /** 模拟云端恢复：代次变化，旧游标与请求上下文废弃（§9.2）。 */
   bumpGeneration(projectId: string) {
     this.stateOf(projectId).generation += 1;
+    this.persist();
   }
 
   // ---- 历史（§10.1）：分页只加载信封，payload 按需下载 ----
@@ -344,6 +458,7 @@ export class MockSyncServer implements SyncServerPort {
       generation: state.generation,
     };
     state.snapshots.push(snapshot);
+    this.persist();
     const { objects: _o, tombstones: _t, order: _r, generation: _g, ...info } = snapshot;
     return info;
   }
@@ -376,6 +491,7 @@ export class MockSyncServer implements SyncServerPort {
       polls: 0,
     };
     state.restores.push(restore);
+    this.persist();
     const { snapshotId: _s, sequence: _q, polls: _p, cancelReason: _c, ...info } = restore;
     return info;
   }
@@ -396,6 +512,7 @@ export class MockSyncServer implements SyncServerPort {
         }
         state.generation += 1;
         restore.status = "ready";
+        this.persist();
       }
     }
     const { snapshotId: _s, sequence: _q, polls: _p, cancelReason: _c, ...info } = restore;
@@ -411,6 +528,7 @@ export class MockSyncServer implements SyncServerPort {
     }
     if (restore.status === "pending") restore.status = "cancelled";
     restore.cancelReason = reason.trim();
+    this.persist();
     const { snapshotId: _s, sequence: _q, polls: _p, cancelReason: _c, ...info } = restore;
     return info;
   }

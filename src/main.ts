@@ -2,6 +2,7 @@ import { createPinia } from "pinia";
 import { createApp } from "vue";
 
 import App from "@/App.vue";
+import { registerSW } from "@/app/pwa";
 import { router } from "@/app/router";
 import { installSessionE2EHook, useSessionStore } from "@/stores/session";
 import { useThemeStore } from "@/stores/theme";
@@ -20,3 +21,5 @@ await useSessionStore()
   .restoreSession()
   .catch(() => false);
 app.mount("#app");
+// 离线应用资源（仅生产）：Service Worker 注册在 /app/ 作用域。
+void registerSW();

@@ -79,7 +79,7 @@ async function submit() {
       </div>
     </div>
     <div class="auth-form-side">
-      <form class="auth-form" @submit.prevent="submit" novalidate>
+      <form class="auth-form" novalidate @submit.prevent="submit">
         <h1>邀请注册</h1>
         <p>输入邀请凭据、设置密码并激活。若激活已成功但响应丢失，请直接登录。</p>
         <p v-if="error" class="field-error" role="alert">{{ error }}</p>

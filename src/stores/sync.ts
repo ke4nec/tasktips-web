@@ -3,6 +3,7 @@ import { ref } from "vue";
 
 import { MockSyncServer } from "@/api/mockSync";
 import { content } from "@/content";
+import { sha256Hex } from "@/sync/serialize";
 import { subscribeInvalidation, SyncEngine } from "@/sync/engine";
 import type { ConflictRecord, SyncLogEntry, SyncStateData } from "@/sync/state";
 import { useClassificationStore } from "@/stores/classification";
@@ -129,7 +130,8 @@ export const useSyncStore = defineStore("sync", () => {
   function notifyDirty(projectId: string = currentProjectId.value) {
     if (!projectId) return;
     status.value = "pending";
-    // 本地保存后触发自动同步（§9.3），合并为单飞任务。
+    // 本地保存后触发自动同步（§9.3），合并为单飞任务；关闭时仅标记待同步。
+    if (detail.value && !detail.value.autoSync) return;
     void getEngine(projectId)
       .syncNow()
       .then(() => reloadContent(projectId))
@@ -190,6 +192,18 @@ export const useSyncStore = defineStore("sync", () => {
         }
       }, 60_000);
     }
+  }
+
+  // E2E 钩子（仅开发模式）：模拟另一设备提交，驱动冲突与恢复流程用例。
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    (window as unknown as { __sync_debug?: object }).__sync_debug = {
+      remoteWriteTodo: async (projectId: string, id: string, body: string) => {
+        const payload = `---\nid: ${id}\ntitle: 远端\nstatus: open\npriority: 0\ntags:\ncreatedAt: 2026-09-01T00:00:00.000Z\nupdatedAt: 2026-09-02T00:00:00.000Z\nrevision: 9\ndeviceId: dev-2\nschemaVersion: 1\n---\n${body}\n`;
+        const hash = await sha256Hex(payload);
+        await mockSyncServer.putPayload(hash, payload);
+        mockSyncServer.remoteWrite(projectId, "todo", id, hash);
+      },
+    };
   }
 
   return {

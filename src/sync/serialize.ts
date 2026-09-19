@@ -140,6 +140,7 @@ export function serializeTodo(todo: Todo, deviceId: string): string {
   const lines = [
     "---",
     `id: ${yamlScalar(todo.id)}`,
+    `title: ${yamlScalar(todo.title)}`,
     `status: ${yamlScalar(todo.status)}`,
     `priority: ${todo.priority}`,
     "tags:",
@@ -152,7 +153,8 @@ export function serializeTodo(todo: Todo, deviceId: string): string {
   lines.push(`updatedAt: ${yamlScalar(todo.updatedAt)}`);
   if (todo.completedAt !== undefined) lines.push(`completedAt: ${yamlScalar(todo.completedAt)}`);
   lines.push(`revision: ${todo.revision}`);
-  lines.push(`deviceId: ${yamlScalar(deviceId)}`);
+  // 保留创建设备；新建（无）时用本次提交设备（§7.1）。
+  lines.push(`deviceId: ${yamlScalar(todo.deviceId ?? deviceId)}`);
   lines.push(`schemaVersion: ${TODO_SCHEMA_VERSION}`);
   for (const [key, value] of Object.entries(
     (todo as unknown as { extra?: Record<string, unknown> }).extra ?? {},
@@ -194,6 +196,9 @@ export function todoFromDoc(
   }
   if (fields.deletedAt) todo.deletedAt = String(fields.deletedAt);
   if (fields.completedAt) todo.completedAt = String(fields.completedAt);
+  if (fields.deviceId !== undefined && fields.deviceId !== null) {
+    todo.deviceId = String(fields.deviceId);
+  }
   if (Object.keys(doc.extra).length > 0) todo.extra = doc.extra;
   return todo;
 }

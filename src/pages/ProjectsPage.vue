@@ -8,13 +8,11 @@ import EmptyState from "@/components/EmptyState.vue";
 import IconButton from "@/components/IconButton.vue";
 import LogoutDialog, { type LogoutChoice } from "@/components/LogoutDialog.vue";
 import { ApiError } from "@/api/types";
-import { content } from "@/content";
+import { performLogout } from "@/app/logout";
 import { useProjectStore } from "@/stores/project";
-import { useSessionStore } from "@/stores/session";
 import { useSyncStore } from "@/stores/sync";
 
 const router = useRouter();
-const session = useSessionStore();
 const projects = useProjectStore();
 const sync = useSyncStore();
 
@@ -87,15 +85,7 @@ async function openLogout() {
 
 async function onLogoutConfirm(choice: LogoutChoice) {
   logoutOpen.value = false;
-  if (choice === "sync") {
-    // 同步后退出：先手动同步当前入口项目（§8.3）。
-    const entry = projects.entryProject();
-    if (entry) await sync.syncNowManual(entry.id).catch(() => undefined);
-  }
-  const email = session.account?.email;
-  await session.logout();
-  // 退出默认清理该账号的本地内容（§8.3）。
-  if (email) await content.clearUserData(email).catch(() => undefined);
+  await performLogout(choice, projects.entryProject()?.id);
   await router.push({ name: "login" });
 }
 </script>

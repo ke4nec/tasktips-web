@@ -7,6 +7,7 @@ import EmptyState from "@/components/EmptyState.vue";
 import FilterDialog from "@/components/list/FilterDialog.vue";
 import SortDialog from "@/components/list/SortDialog.vue";
 import TodoRow from "@/components/list/TodoRow.vue";
+import { useVirtualWindow } from "@/components/list/virtualWindow";
 import { groupCompleted, groupToday, groupUpcoming, type TodoGroup } from "@/domain/query";
 import { todayLocal } from "@/domain/datetime";
 import type { TodoView } from "@/domain/types";
@@ -53,6 +54,13 @@ const groups = computed<TodoGroup[] | null>(() => {
 });
 
 const activeFilterCount = computed(() => todos.filterCount());
+
+// 大列表虚拟化（inbox/all 平直列表；分组视图保持全量渲染）。
+// 拖拽排序仅在可视窗口内有效，超出需先滚动（§12.1 性能验收）。
+const vwin = useVirtualWindow({
+  items: () => items.value,
+  threshold: 100,
+});
 const sortLabel = computed(() => {
   if (!todos.sort) return "默认排序";
   return {
@@ -190,16 +198,20 @@ function onDrop(event: DragEvent, targetId: string) {
       </section>
     </template>
     <div v-else data-list-content>
-      <TodoRow
-        v-for="item in items"
-        :key="item.id"
-        :todo="item"
-        :project-id="projectId"
-        :sortable="sortable"
-        @menu="openMenu"
-        @dragover.prevent
-        @drop="onDrop($event, item.id)"
-      />
+      <div :style="{ height: vwin.totalHeight.value, position: 'relative' }">
+        <div :style="{ transform: `translateY(${vwin.offsetY.value}px)` }">
+          <TodoRow
+            v-for="item in vwin.visibleItems.value"
+            :key="item.id"
+            :todo="item"
+            :project-id="projectId"
+            :sortable="sortable"
+            @menu="openMenu"
+            @dragover.prevent
+            @drop="onDrop($event, item.id)"
+          />
+        </div>
+      </div>
     </div>
 
     <FilterDialog :open="filterOpen" @update:open="filterOpen = $event" />

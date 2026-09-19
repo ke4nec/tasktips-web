@@ -3,9 +3,9 @@
 普通用户浏览器客户端：受邀注册、登录即用、离线记录、多端接续。产品与前端设计见
 `docs/tasktips-web-design.md`，HTML 交互稿见 `design/`（`design/README.md`）。
 
-> 当前状态：P7 历史快照备份与设置完成（云端历史/快照/恢复、ZIP 备份、
-> 改密/设备/存储分区；历史快照走 Mock 服务端，云端落地后换 HTTP）。
-> 正式业务功能按任务计划逐步接入，设计文档 §12.2 为实施顺序依据。
+> 当前状态：全部阶段交付（P0–P8）。Web 会话接口与云端 sync/history/snapshot
+> 仍走 Mock（云端落地后替换为 HTTP），其余功能完整可用。
+> 验收矩阵与已知限制见本文末尾。
 
 ## 技术框架
 
@@ -66,7 +66,7 @@ npm run preview   # 预览生产构建
 npm run lint      # Prettier 检查 + ESLint
 npm run format    # 自动格式化
 npm run test      # Vitest 单测
-npm run test:e2e  # Playwright 端到端（自动拉起 dev 服务器）
+npm run test:e2e  # Playwright 端到端（自动拉起 dev 服务器，需先 npx playwright install chromium）
 npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 ```
 
@@ -107,11 +107,35 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 - 已知债务：分栏同步滚动为比例映射（设计稿行为），正式块映射待 P8 前补齐；
   预览与即时共用 Milkdown 管线，语法与安全规则一致。
 
-## 已知阻塞依赖
+## 部署
 
-云端 4 个 Web 会话接口（`POST /api/v1/web/auth/login`、
-`POST /api/v1/web/auth/invitations/activate`、
-`POST /api/v1/web/auth/refresh`、
-`POST /api/v1/web/auth/logout`）在 `tasktips-cloud` 尚不存在。
-前端按设计文档 §8.2 契约先行 Mock，云端实现后联调替换（见任务计划 P2）。
-业务接口（`/me`、`/devices`、`/projects`、sync/history/snapshots/restores/payloads）复用现有实现。
+生产部署见 `deploy/`：`Caddyfile.example`（推荐，反代+安全头）、`nginx.conf` 与
+`Dockerfile.web`（备选）。要点（设计文档 §11.2）：
+
+- 应用部署在 `/app/`，根路径 `/` 重定向 `/app/`；history fallback 仅限 `/app/` 内。
+- 生产要求 HTTPS；`TASKTIPS_WEB_ORIGIN` 与浏览器实际 origin 一致。
+- Service Worker 注册在 `/app/`，只缓存版本化应用外壳（发版递增 `public/sw.js`
+  的 `CACHE_VERSION`），不缓存认证响应、API 响应与带凭据下载。
+- CSP 经反代下发（`script-src 'self'` + 内联主题引导哈希，见示例文件注释）；
+  Milkdown/CodeMirror 运行时样式需要 `style-src 'unsafe-inline'`（已在示例中权衡注明）。
+- 新版本下载后提示用户刷新（先完成本地保存），不在输入中自动 reload。
+
+## 验收矩阵（设计文档 §12.1 落点）
+
+- 邀请/登录/项目空间/智能入口/退出清理：单测 + `auth.spec.ts`。
+- 主题持久化、抽屉导航、命令面板：`shell.spec.ts`。
+- 查询/筛选/排序/拖拽、目录标签生命周期、回收站 30 天：`workbench.spec.ts` + 领域单测。
+- 双模式编辑、跨模式撤销、自动保存、图片、元数据：`editor.spec.ts` + 会话单测。
+- 同步全链路（bootstrap/增量/冲突双向/墓碑/幂等/拒绝/代次/退避/维护）：引擎单测 12 项。
+- 历史/快照/恢复/ZIP/改密/设备/存储：`settings.spec.ts` + 单测。
+- 性能：千条查询 P95 <100ms（`queryPerf.test.ts`，node 实测）；平直大列表虚拟化。
+- 多标签页任务锁：单测 + 探测跳过（headless-shell 不实现跨页互斥，真机手动验证）。
+
+## 已知阻塞依赖与限制
+
+- 云端 4 个 Web 会话接口（`POST /api/v1/web/auth/*`）与 sync/history/snapshot
+  的浏览器侧 HTTP 语义在 `tasktips-cloud` 尚未落地：前端按契约 Mock 先行
+  （`MockApi`/`MockSyncServer`，状态经 localStorage 跨页持久），云端实现后替换。
+- 业务接口（`/me`、`/devices`、`/projects`、改密）已有 HttpApi 实现待联调。
+- 回收站本地保留不上传；分栏同步滚动为比例映射（正式块映射待补）；
+  ZIP 超大空间不足、中文输入法真机组合键、焦点可见性需真机复核。

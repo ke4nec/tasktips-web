@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { content } from "@/content";
+import { mockSyncServer } from "@/stores/sync";
 import { useSessionStore } from "@/stores/session";
 import { useSyncStore } from "@/stores/sync";
 
@@ -11,6 +12,7 @@ describe("同步门面", () => {
   beforeEach(async () => {
     localStorage.clear();
     setActivePinia(createPinia());
+    mockSyncServer.reset();
     await useSessionStore().mockLoginQuick();
   });
 

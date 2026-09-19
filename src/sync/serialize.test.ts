@@ -91,6 +91,56 @@ describe("分类序列化", () => {
   });
 });
 
+describe("移动端夹具兼容（三端往返）", () => {
+  // 来源：tasktips-mobile/test/front_matter_test.dart 首个用例原文。
+  const src = [
+    "---",
+    "schemaVersion: 1",
+    "id: 01TEST",
+    "title: 标题",
+    "status: open",
+    "priority: 2",
+    "tags:",
+    "  - work",
+    "dueDate: 2026-09-16",
+    "categoryId: null",
+    "deletedAt: null",
+    "createdAt: 2026-08-18T01:00:00Z",
+    "updatedAt: 2026-08-18T01:10:00Z",
+    "completedAt: null",
+    "revision: 3",
+    "deviceId: dev-1",
+    "customField: keep-me",
+    "---",
+    "",
+    "## 今日任务",
+    "",
+    "- [ ] 完善编辑窗口",
+    "",
+  ].join("\n");
+
+  it("解析保留未知字段与创建设备", () => {
+    const doc = parseTodoDoc(src);
+    expect(doc.extra).toEqual({ customField: "keep-me" });
+    const todo = todoFromDoc("01TEST", doc, 1);
+    expect(todo.tags).toEqual(["work"]);
+    expect(todo.dueDate).toBe("2026-09-16");
+    expect(todo.revision).toBe(3);
+    expect(todo.deviceId).toBe("dev-1");
+    expect(todo.categoryId).toBeUndefined();
+  });
+
+  it("重序列化保留创建设备与未知字段", () => {
+    const todo = todoFromDoc("01TEST", parseTodoDoc(src), 1);
+    const out = serializeTodo({ ...todo, title: "标题" }, "dev-2");
+    expect(out).toContain("deviceId: dev-1");
+    expect(out).toContain("title: 标题");
+    const reparsed = parseTodoDoc(out);
+    expect(reparsed.extra).toEqual({ customField: "keep-me" });
+    expect(todoFromDoc("01TEST", reparsed, 1).body).toBe(todo.body);
+  });
+});
+
 describe("哈希", () => {
   it("SHA-256 稳定", async () => {
     expect(await sha256Hex("hello")).toBe(

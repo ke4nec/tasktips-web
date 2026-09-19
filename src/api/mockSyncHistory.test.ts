@@ -5,6 +5,7 @@ import { MockSyncServer } from "@/api/mockSync";
 describe("历史快照恢复（Mock）", () => {
   it("历史分页只给信封", async () => {
     const server = new MockSyncServer();
+    server.reset();
     server.remoteWrite("demo", "todo", "t-1", "h1");
     await server.putPayload("h1", "payload-1");
     server.remoteWrite("demo", "todo", "t-1", "h2");
@@ -22,6 +23,7 @@ describe("历史快照恢复（Mock）", () => {
 
   it("快照创建与恢复任务轮询", async () => {
     const server = new MockSyncServer();
+    server.reset();
     server.remoteWrite("demo", "todo", "t-1", "h1");
     const snapshot = await server.createSnapshot("demo", "发布前");
     expect(snapshot.status).toBe("ready");
@@ -48,6 +50,7 @@ describe("历史快照恢复（Mock）", () => {
 
   it("取消pending任务需原因", async () => {
     const server = new MockSyncServer();
+    server.reset();
     const snapshot = await server.createSnapshot("demo", "");
     const restore = await server.createRestore("demo", {
       snapshotId: snapshot.id,

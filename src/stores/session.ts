@@ -3,11 +3,12 @@ import { computed, ref } from "vue";
 
 import { api, setTokenProvider } from "@/api";
 import { DEMO_EMAIL, DEMO_PASSWORD } from "@/api/mock";
-import type { Account } from "@/api/types";
+import { ApiError, type Account } from "@/api/types";
 import { useProjectStore } from "@/stores/project";
 
 export const DEVICE_ID_PREFIX = "tasktips:device-id";
 export const LAST_PROJECT_KEY = "tasktips:last-project";
+export const PENDING_LOGOUT_KEY = "tasktips:pending-logout";
 
 // access token 仅存内存（§8.2），HttpApi 经 provider 读取，脚本存储中没有刷新令牌。
 let currentToken: string | null = null;
@@ -92,15 +93,23 @@ export const useSessionStore = defineStore("session", () => {
   }
 
   // 启动恢复：先刷新会话再读身份（§8.3），失败即未登录态。
-  // 成功后补注册本机设备（upsert，刷新页面不重复创建 §8.1）。
+  // 成功后补注册本机设备（upsert，刷新页面不重复创建 §8.1），
+  // 并补执行离线退出时挂起的远端注销（§8.3）。
   async function restoreSession(): Promise<boolean> {
     const ok = await refreshAccess();
-    if (ok && account.value && deviceId.value) {
-      try {
-        await api.registerDevice({ deviceId: deviceId.value, name: browserName() });
-      } catch {
-        // 设备注册失败不阻断进入工作台
+    if (!ok || !account.value || !deviceId.value) return ok;
+    try {
+      await api.registerDevice({ deviceId: deviceId.value, name: browserName() });
+    } catch {
+      // 设备注册失败不阻断进入工作台
+    }
+    try {
+      if (localStorage.getItem(PENDING_LOGOUT_KEY) === "1") {
+        await api.logout();
+        localStorage.removeItem(PENDING_LOGOUT_KEY);
       }
+    } catch {
+      // 下次恢复时重试
     }
     return ok;
   }
@@ -115,14 +124,24 @@ export const useSessionStore = defineStore("session", () => {
   async function logout() {
     try {
       await api.logout();
-    } finally {
-      clearAuth();
-      useProjectStore().reset();
-      try {
-        localStorage.removeItem(LAST_PROJECT_KEY);
-      } catch {
-        // 忽略
+    } catch (error) {
+      // 离线退出：本地访问立即终止，远端注销挂起待下次联网（§8.3）。
+      if (error instanceof ApiError && error.code === "NETWORK_ERROR") {
+        try {
+          localStorage.setItem(PENDING_LOGOUT_KEY, "1");
+        } catch {
+          // 忽略
+        }
+      } else {
+        throw error;
       }
+    }
+    clearAuth();
+    useProjectStore().reset();
+    try {
+      localStorage.removeItem(LAST_PROJECT_KEY);
+    } catch {
+      // 忽略
     }
   }
 

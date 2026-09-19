@@ -68,7 +68,7 @@ async function submit() {
       </div>
     </div>
     <div class="auth-form-side">
-      <form class="auth-form" @submit.prevent="submit" novalidate>
+      <form class="auth-form" novalidate @submit.prevent="submit">
         <h1>登录</h1>
         <p>使用受邀邮箱与密码登录，认证成功后进入项目空间。</p>
         <p v-if="error" class="field-error" role="alert">{{ error }}</p>

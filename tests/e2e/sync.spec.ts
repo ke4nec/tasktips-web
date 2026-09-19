@@ -1,5 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 
+declare global {
+  interface Window {
+    __sync_debug?: {
+      remoteWriteTodo: (projectId: string, id: string, body: string) => Promise<void>;
+    };
+  }
+}
+
 async function login(page: Page) {
   await page.goto("/app/login");
   await page.evaluate(() => window.__tasktips_e2e?.mockLogin());
@@ -30,6 +38,36 @@ test("手动同步与自动开关", async ({ page }) => {
   await expect(autoSwitch).toHaveAttribute("aria-checked", "false", { timeout: 10000 });
   await autoSwitch.click();
   await expect(autoSwitch).toHaveAttribute("aria-checked", "true", { timeout: 10000 });
+});
+
+test("双端编辑冲突保留本机", async ({ page }) => {
+  // 先关闭自动同步，使本机改动与远端改动确定性相遇。
+  await page.goto("/app/p/demo/sync");
+  await expect(page.getByText(/所有更改已同步/)).toBeVisible({ timeout: 15000 });
+  const autoSwitch = page.getByRole("switch", { name: "自动同步" });
+  await expect(autoSwitch).toHaveAttribute("aria-checked", "true");
+  await autoSwitch.click();
+  await expect(autoSwitch).toHaveAttribute("aria-checked", "false", { timeout: 10000 });
+
+  await page.goto("/app/p/demo/inbox");
+  await page.locator(".task-row .task-main").first().click();
+  await expect(page.locator(".editor-content .ProseMirror").first()).toBeVisible();
+  const prose = page.locator(".editor-content .ProseMirror").first();
+  await prose.click();
+  await page.keyboard.type("本机追加");
+  await page.waitForTimeout(2000);
+  const todoId = new URL(page.url()).pathname.split("/").pop() as string;
+
+  await page.evaluate(
+    ([projectId, id]) => window.__sync_debug?.remoteWriteTodo(projectId, id, "# 远端修改正文"),
+    ["demo", todoId],
+  );
+
+  await page.goto("/app/p/demo/sync");
+  await page.getByRole("button", { name: "立即同步" }).click();
+  await expect(page.getByText("有冲突需要处理")).toBeVisible({ timeout: 15000 });
+  await page.getByRole("button", { name: "保留本机" }).click();
+  await expect(page.getByText("已保留本机版本")).toBeVisible({ timeout: 15000 });
 });
 
 test("退出登录提供同步后退出", async ({ page }) => {

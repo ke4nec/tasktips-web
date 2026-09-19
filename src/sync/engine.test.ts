@@ -14,6 +14,7 @@ function setup() {
   seq += 1;
   const content = new DexieContent(() => "u", `tasktips-sync-test-${seq}`);
   const server = new MockSyncServer();
+  server.reset();
   let counter = 0;
   const engine = new SyncEngine({
     content,
@@ -242,6 +243,24 @@ describe("同步引擎", () => {
       await content.deleteDatabase();
     }
   });
+
+  it("分页中断不提前提交游标：600 条分两页初始化", async () => {
+    const { content, server, engine } = setup();
+    try {
+      for (let index = 0; index < 600; index++) {
+        await content.createTodo("demo", { body: `批量任务 ${index}` });
+      }
+      const status = await engine.syncNow({ manual: true });
+      expect(status).toBe("synced");
+      expect(server.inspect("demo").objects).toBe(608);
+      // 游标是下载方向位置：再次增量拉取（两页）后走到末尾
+      // （6 未删除种子 + 600 新任务 + 分类 + 索引；回收站任务不上传）
+      await engine.syncNow({ manual: true });
+      expect((await engine.getState()).cursor).toBe("608");
+    } finally {
+      await content.deleteDatabase();
+    }
+  }, 30000);
 
   it("游标失效自动重新初始化", async () => {
     const { content, server, engine } = setup();

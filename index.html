@@ -6,6 +6,12 @@
     <meta name="color-scheme" content="light dark" />
     <!-- /app/ 为设计文档固定的部署路径（§11.2），public 资源用其绝对路径，dev/prod 一致 -->
     <link rel="icon" href="/app/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/app/manifest.webmanifest" />
+    <meta name="theme-color" content="#0078D4" />
+    <meta
+      name="description"
+      content="TaskTips Web：受邀注册、登录即用、离线记录、多端接续的任务工作台"
+    />
     <title>TaskTips Web</title>
     <!-- 首帧主题底色：内联以避免 base 路径改写问题；P8 CSP 需为其放行 sha256 哈希。
          与 public/theme-boot.js 同源（桌面端移植），偏好键 tasktips:theme-preference。 -->
