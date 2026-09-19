@@ -7,7 +7,7 @@ import AppIcon from "@/components/AppIcon.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import IconButton from "@/components/IconButton.vue";
 import TodoRow from "@/components/list/TodoRow.vue";
-import { content } from "@/content/mock";
+import { content } from "@/content";
 import { deriveTitle } from "@/domain/title";
 import type { Todo, TodoView } from "@/domain/types";
 import { altFromFileName, imagePath, storeImageBlob, validateImageFile } from "@/editor/images";
@@ -122,7 +122,12 @@ async function loadTodo() {
   loading.value = true;
   loadError.value = "";
   try {
-    await Promise.all([todos.load(projectId.value), classification.load(projectId.value)]);
+    await Promise.all([
+      todos.load(projectId.value),
+      classification.load(projectId.value),
+      // 预取项目图片二进制到内存注册，编辑器以 Blob URL 展示（§5.3）。
+      content.listImages(projectId.value).catch(() => []),
+    ]);
     if (!isNew.value) {
       const found = todos.todos.find((item) => item.id === todoId.value);
       if (!found) throw new ApiError("NOT_FOUND", "任务不存在。", 404);
@@ -285,7 +290,12 @@ async function uploadFiles(files: File[]): Promise<{ src: string; alt: string }[
     try {
       const { ext } = await validateImageFile(file);
       const path = imagePath(ext);
-      storeImageBlob(path, file);
+      // 内存注册即时展示，Dexie 持久二进制（P5）；失败回退纯内存。
+      try {
+        await content.putImage(projectId.value, path, file);
+      } catch {
+        storeImageBlob(path, file);
+      }
       results.push({ src: path, alt: altFromFileName(file.name) });
     } catch (error) {
       ui.notify(error instanceof Error ? error.message : "图片导入失败");

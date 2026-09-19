@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
-import { content } from "@/content/mock";
+import { content } from "@/content";
 import { todayLocal } from "@/domain/datetime";
 import { runQuery, viewCounts } from "@/domain/query";
 import type {

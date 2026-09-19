@@ -3,8 +3,7 @@
 普通用户浏览器客户端：受邀注册、登录即用、离线记录、多端接续。产品与前端设计见
 `docs/tasktips-web-design.md`，HTML 交互稿见 `design/`（`design/README.md`）。
 
-> 当前状态：P4 双模式编辑器完成（Milkdown 即时 + CodeMirror 源码 + 只读预览、
-> 共享会话/撤销/自动保存、图片导入、元数据管理）。
+> 当前状态：P5 本地数据基础完成（Dexie 持久化、命名空间隔离、事务、恢复副本）。
 > 正式业务功能按任务计划逐步接入，设计文档 §12.2 为实施顺序依据。
 
 ## 技术框架
@@ -32,7 +31,7 @@ src/
   components/layout/  应用壳：AppShell/AppSidebar/AppTopbar/CommandPalette/ShellHost
   components/list/    任务行/筛选/排序弹层/取色器
   domain/       纯领域规则：标题派生/日期/色板/查询排序/分类校验（桌面端直译 + §4）
-  content/      内容仓储抽象 + 内存实现 + demo 种子（P5 替换为 Dexie）
+  content/      内容仓储抽象 + Dexie 实现 + demo 种子 + 快照/恢复副本/图片二进制
   editor/       双模式会话/自动保存/图片校验、Milkdown 即时与只读预览、CodeMirror 源码
   stores/       Pinia：theme/session/ui/project/todos（查询状态）/classification（分类与回收站）
   styles/       base.css + theme.css（设计令牌）+ components.css（产品组件样式，类名对齐设计稿）
@@ -88,8 +87,10 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
   智能入口（上次项目/单项目直入）、退出清理。
 - P3 验收：视图谓词/搜索/标签目录筛选/默认显式自定义排序、同批删除恢复/同名冲突/
   标签软删与重命名 propagation、三级目录校验、回收站 30 天（单测 104 + e2e 20）。
-- 注意：内存内容仓储跳页即失（演示数据重置），E2E 内用站内导航覆盖跨页流程；
-  P5 Dexie 落地后消除该限制。
+- 注意：认证 Mock 经刷新仿真跨页恢复会话，内容仓储由 Dexie 持久化；
+  E2E 覆盖整页刷新后内容保留。
+- P5 验收：命名空间隔离、同库新实例读取、事务回滚（非法快照不动现状）、
+  恢复副本上限保留、图片记录存取（单测 121 + e2e 26）。
 - P4 验收：即时↔分栏内容一致、跨模式撤销重做、输入法组合延后切换、400ms/2s 自动保存
   与序号回执、图片魔数校验与 Blob 展示、元数据与完成切换（单测 115 + e2e 25）。
 - 已知债务：分栏同步滚动为比例映射（设计稿行为），正式块映射待 P8 前补齐；

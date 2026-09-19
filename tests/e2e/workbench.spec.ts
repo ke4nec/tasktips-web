@@ -74,6 +74,26 @@ test("回收站恢复种子任务", async ({ page }) => {
   await expect(page.getByText("旧的草稿")).toHaveCount(0);
 });
 
+test("刷新后本地修改保留（Dexie 持久化）", async ({ page }) => {
+  await page.goto("/app/p/demo/today");
+  const checkbox = page.getByRole("checkbox", { name: /核对多端同步/ }).first();
+  await checkbox.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.checked = true;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.getByRole("status")).toContainText("又完成了一件小事");
+  // 整页刷新：内存态丢失，会话经刷新仿真恢复，内容经 Dexie 恢复。
+  await page.reload();
+  await expect(page.getByRole("heading", { name: /今天/ })).toBeVisible();
+  await expect(page.getByText("核对多端同步的交互细节")).toHaveCount(0);
+  await page
+    .locator("aside")
+    .getByRole("link", { name: /已完成/ })
+    .click();
+  await expect(page.getByText("核对多端同步的交互细节")).toBeVisible();
+});
+
 test("侧栏显示视图计数与目录树", async ({ page }) => {
   await page.goto("/app/p/demo/today");
   const nav = page.getByRole("navigation", { name: "固定视图" });

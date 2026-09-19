@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
-import { content } from "@/content/mock";
+import { content } from "@/content";
 import type { TrashSnapshot } from "@/content/port";
 import { buildCategoryTree } from "@/domain/classification";
 import type { Category, CategoryNode, Tag, TagGroup } from "@/domain/types";
