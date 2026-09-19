@@ -3,7 +3,8 @@
 普通用户浏览器客户端：受邀注册、登录即用、离线记录、多端接续。产品与前端设计见
 `docs/tasktips-web-design.md`，HTML 交互稿见 `design/`（`design/README.md`）。
 
-> 当前状态：P0 工程脚手架。正式业务功能按任务计划逐步接入，设计文档 §12.2 为实施顺序依据。
+> 当前状态：P1 应用壳完成（设计系统 + 完整路由 + 三栏布局 + 主题 + 命令面板，业务页为占位）。
+> 正式业务功能按任务计划逐步接入，设计文档 §12.2 为实施顺序依据。
 
 ## 技术框架
 
@@ -24,10 +25,12 @@
 
 ```text
 src/
-  app/          路由与应用级装配（完整路由表 P1 补齐）
-  pages/        路由页面（业务页 P2 起接入）
-  components/   手写基础组件（P1 起）
-  styles/       base.css + theme.css（全量令牌 P1 从桌面端迁移）
+  app/          路由（与 §3.1 路由表对应）与视图定义
+  pages/        路由页面（P1 为布局占位，业务页 P2 起接入）
+  components/   手写基础组件：AppIcon/IconButton/AppDialog/AppToast/EmptyState/ThemeSwitcher
+  components/layout/  应用壳：AppShell/AppSidebar/AppTopbar/CommandPalette/ShellHost
+  stores/       Pinia：theme（浅色/深色/跟随系统）/session（P1 mock，P2 替换）/ui（Toast）
+  styles/       base.css + theme.css（设计令牌）+ components.css（产品组件样式，类名对齐设计稿）
   api/          生成的契约类型 schema.d.ts（gitignore，由 generate:api 生成）
   editor/       双模式编辑会话（P4）
   domain/       纯领域规则（P5，由桌面/移动端直译）
@@ -70,7 +73,9 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 
 - 单元/组件：`src/**/*.test.ts`，`npm run test`。
 - 端到端：`tests/e2e/*.spec.ts`，`npm run test:e2e`。
-- 当前验收：路由基座（`/` → `/app/`、未知路径 not-found）、应用壳可访问。
+- 当前验收：完整路由表与守卫、主题持久化与跟随系统、移动端抽屉、命令面板导航、
+  弹层焦点归还（设计稿动效对齐：弹层/Toast/抽屉/主题过渡/骨架呼吸）。
+- 会话为 P1 mock（`tasktips:mock-session` + dev 下 `window.__tasktips_e2e`），P2 替换为真实会话。
 
 ## 已知阻塞依赖
 

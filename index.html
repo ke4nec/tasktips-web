@@ -4,8 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- /app/ 为设计文档固定的部署路径（§11.2），public 资源用其绝对路径，dev/prod 一致 -->
+    <link rel="icon" href="/app/favicon.svg" type="image/svg+xml" />
     <title>TaskTips Web</title>
+    <!-- 首帧主题底色：必须在样式绘制前同步执行 -->
+    <script src="/app/theme-boot.js"></script>
   </head>
   <body>
     <div id="app"></div>

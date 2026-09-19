@@ -1,17 +1,261 @@
-/* P0 占位令牌：P1 阶段迁移桌面端 theme.css 全量令牌并对齐设计稿。 */
-:root,
-:root[data-theme="light"] {
+/* TaskTips Web 设计令牌与基础样式。
+ *
+ * 来源：design/assets/design.css 的 :root / dark / 基础复位，产品子集
+ * （评审工具 review-bar、总览 gallery、演示 mini-page 已剔除，正式产品不包含）。
+ * 组件样式见 components.css；桌面端 theme.css 仅作便签色参考（Web 无便签色功能）。
+ */
+:root {
   color-scheme: light;
   --bg: #f3f3f3;
-  --surface: #ffffff;
-  --text: #1b1b1b;
-  --accent: #0078d4;
+  --panel: #fff;
+  --sidebar: #f7f8fa;
+  --surface: #f1f3f6;
+  --hover: #edf0f4;
+  --line: #e6e8ed;
+  --text: #20252d;
+  --muted: #6a7280;
+  --subtle: #9299a4;
+  --brand: #0078d4;
+  --brand-hover: #0068b8;
+  --brand-soft: #e8f2fd;
+  --on-brand: #fff;
+  --green: #258251;
+  --green-soft: #eaf5ed;
+  --red: #c42b1c;
+  --red-soft: #fceeea;
+  --amber: #98641d;
+  --amber-soft: #fff5df;
+  --purple: #8663b4;
+  --purple-soft: #f1ecf8;
+  --shadow: 0 10px 36px #1c365414;
+  --radius: 12px;
+  --sidebar-width: 224px;
+  font-family: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 14px;
+  font-synthesis: none;
 }
 
-:root[data-theme="dark"] {
+html[data-theme="dark"] {
   color-scheme: dark;
   --bg: #202020;
-  --surface: #2b2b2b;
-  --text: #ffffff;
-  --accent: #4a9eff;
+  --panel: #292b2e;
+  --sidebar: #242628;
+  --surface: #32353a;
+  --hover: #363a40;
+  --line: #3a3e44;
+  --text: #f2f3f5;
+  --muted: #b0b6c0;
+  --subtle: #8b94a0;
+  --brand: #4a9eff;
+  --brand-hover: #6cb0ff;
+  --brand-soft: #253b53;
+  --on-brand: #09233e;
+  --green: #86cca2;
+  --green-soft: #263f32;
+  --red: #ff9186;
+  --red-soft: #462e2a;
+  --amber: #ebc07b;
+  --amber-soft: #433b29;
+  --purple: #c1a3ef;
+  --purple-soft: #383148;
+  --shadow: 0 10px 36px #0003;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+  touch-action: manipulation;
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  background: none;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 27px;
+  letter-spacing: -0.8px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+h2 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+small,
+.small {
+  font-size: 12px;
+}
+
+code {
+  font:
+    12px "SFMono-Regular",
+    Consolas,
+    monospace;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+.icon {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: middle;
+}
+
+.icon.small {
+  width: 15px;
+  height: 15px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.subtle {
+  color: var(--subtle);
+}
+
+.red {
+  color: var(--red);
+}
+
+.green {
+  color: var(--green);
+}
+
+.blue {
+  color: var(--brand);
+}
+
+.purple {
+  color: var(--purple);
+}
+
+.amber {
+  color: var(--amber);
+}
+
+.flex {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.wrap {
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.stack {
+  display: grid;
+  gap: 20px;
+}
+
+.mt {
+  margin-top: 24px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+kbd {
+  font-family: inherit;
+  font-size: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+    scroll-behavior: auto !important;
+  }
 }

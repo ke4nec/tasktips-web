@@ -1,10 +1,11 @@
-/* P0 基座样式：完整设计令牌在 P1 设计系统阶段从桌面端迁移并对齐设计稿。 */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
+/* 基座：全屏应用高度。视觉令牌与复位见 theme.css，组件样式见 components.css。 */
+html,
 body {
   margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#app {
+  height: 100%;
 }
