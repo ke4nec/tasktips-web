@@ -1,10 +1,11 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MOCK_SESSION_KEY, useSessionStore } from "@/stores/session";
+import { DEMO_EMAIL } from "@/api/mock";
+import { DEVICE_ID_PREFIX, useSessionStore } from "@/stores/session";
 import { useUiStore } from "@/stores/ui";
 
-describe("会话占位（P1 mock，P2 替换为真实会话）", () => {
+describe("浏览器会话（MockApi）", () => {
   beforeEach(() => {
     localStorage.clear();
     setActivePinia(createPinia());
@@ -14,27 +15,41 @@ describe("会话占位（P1 mock，P2 替换为真实会话）", () => {
     expect(useSessionStore().isAuthenticated).toBe(false);
   });
 
-  it("mock 登录后已认证并持久化", () => {
+  it("登录后建立会话并注册 Web 设备", async () => {
     const session = useSessionStore();
-    session.mockLogin("user@example.com");
+    await session.mockLoginQuick();
     expect(session.isAuthenticated).toBe(true);
-    expect(session.account?.email).toBe("user@example.com");
-    expect(localStorage.getItem(MOCK_SESSION_KEY)).toContain("user@example.com");
+    expect(session.account?.email).toBe(DEMO_EMAIL);
+    expect(session.accessToken).toBeTruthy();
+    expect(session.deviceId).toBeTruthy();
+    expect(localStorage.getItem(`${DEVICE_ID_PREFIX}:${DEMO_EMAIL}`)).toBe(session.deviceId);
   });
 
-  it("损坏的缓存不视为登录", () => {
-    localStorage.setItem(MOCK_SESSION_KEY, "{broken");
-    // 新建 pinia 使 store 重读缓存
-    setActivePinia(createPinia());
-    expect(useSessionStore().isAuthenticated).toBe(false);
-  });
-
-  it("退出后清除状态", () => {
+  it("设备 ID 按账号隔离、跨登录保持", async () => {
     const session = useSessionStore();
-    session.mockLogin("user@example.com");
-    session.mockLogout();
+    await session.mockLoginQuick();
+    const first = session.deviceId;
+    await session.logout();
+    await session.mockLoginQuick();
+    expect(session.deviceId).toBe(first);
+  });
+
+  it("错误密码登录失败且不残留会话", async () => {
+    const session = useSessionStore();
+    await expect(session.login(DEMO_EMAIL, "wrong-password")).rejects.toMatchObject({
+      code: "INVALID_CREDENTIALS",
+    });
     expect(session.isAuthenticated).toBe(false);
-    expect(localStorage.getItem(MOCK_SESSION_KEY)).toBeNull();
+  });
+
+  it("退出后清理内存会话与上次项目", async () => {
+    const session = useSessionStore();
+    await session.mockLoginQuick();
+    localStorage.setItem("tasktips:last-project", "demo");
+    await session.logout();
+    expect(session.isAuthenticated).toBe(false);
+    expect(session.accessToken).toBeNull();
+    expect(localStorage.getItem("tasktips:last-project")).toBeNull();
   });
 });
 

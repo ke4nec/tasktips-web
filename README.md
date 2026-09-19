@@ -3,7 +3,8 @@
 普通用户浏览器客户端：受邀注册、登录即用、离线记录、多端接续。产品与前端设计见
 `docs/tasktips-web-design.md`，HTML 交互稿见 `design/`（`design/README.md`）。
 
-> 当前状态：P1 应用壳完成（设计系统 + 完整路由 + 三栏布局 + 主题 + 命令面板，业务页为占位）。
+> 当前状态：P2 认证与项目空间完成（登录/邀请注册/项目选择/新建重命名，
+> MockApi 先行，云端 Web 会话接口落地后切换 HttpApi）。
 > 正式业务功能按任务计划逐步接入，设计文档 §12.2 为实施顺序依据。
 
 ## 技术框架
@@ -65,6 +66,10 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 
 - `vite.config.ts` 将 `/api` 代理到 `http://127.0.0.1:18080`（本地云端 API），生产由同源反代承载。
 - 应用部署在 `/app/`，根路径 `/` 重定向 `/app/`（设计文档 §3.1、§11.2）。
+- 后端模式：默认 `MockApi`（内存 + localStorage 刷新仿真）；
+  联调时 `VITE_API_MODE=http npm run dev` 切换真实 fetch。
+  Mock 预置账号 `demo@example.com / Demo12345678`、邀请 `demo-invitation-token`，仅 dev/E2E。
+- access token 仅存内存；设备 ID 按浏览器安装及账号隔离（`tasktips:device-id:<email>`）。
 - `generate:api` 默认读取 `../tasktips-cloud/contracts/openapi.yaml`，
   可用 `TASKTIPS_CLOUD_CONTRACT=/path/to/openapi.yaml` 覆盖。
   Web 会话接口（§8.2 的 4 个 Cookie 接口）落地前输出占位声明，不阻塞构建。
@@ -75,7 +80,8 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 - 端到端：`tests/e2e/*.spec.ts`，`npm run test:e2e`。
 - 当前验收：完整路由表与守卫、主题持久化与跟随系统、移动端抽屉、命令面板导航、
   弹层焦点归还（设计稿动效对齐：弹层/Toast/抽屉/主题过渡/骨架呼吸）。
-- 会话为 P1 mock（`tasktips:mock-session` + dev 下 `window.__tasktips_e2e`），P2 替换为真实会话。
+- P2 验收：登录/错误密码、邀请预填与激活、无效邀请拒绝、密码规则、新建/重命名项目、
+  智能入口（上次项目/单项目直入）、退出清理（单测 34 + e2e 13）。
 
 ## 已知阻塞依赖
 

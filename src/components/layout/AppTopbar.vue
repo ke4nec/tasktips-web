@@ -5,7 +5,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 import AppIcon from "@/components/AppIcon.vue";
 import IconButton from "@/components/IconButton.vue";
 import { viewDef } from "@/app/views";
-import { mockProject } from "@/stores/project";
+import { useProjectStore } from "@/stores/project";
 import { useSessionStore } from "@/stores/session";
 import { useThemeStore } from "@/stores/theme";
 import { useUiStore } from "@/stores/ui";
@@ -19,10 +19,11 @@ const emit = defineEmits<{
 const route = useRoute();
 const router = useRouter();
 const session = useSessionStore();
+const projects = useProjectStore();
 const theme = useThemeStore();
 const ui = useUiStore();
 
-const project = computed(() => mockProject(props.projectId));
+const project = computed(() => projects.currentProject(props.projectId));
 
 // 面包屑：项目 / 当前位置（与路由表 §3.1 对应，分类页按 ?tab=tags 区分）。
 const position = computed(() => {

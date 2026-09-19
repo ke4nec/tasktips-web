@@ -4,7 +4,7 @@ import { RouterLink, useRoute } from "vue-router";
 
 import AppIcon from "@/components/AppIcon.vue";
 import { PROJECT_VIEWS } from "@/app/views";
-import { mockProject } from "@/stores/project";
+import { useProjectStore } from "@/stores/project";
 import { useSessionStore } from "@/stores/session";
 
 const props = defineProps<{ projectId: string }>();
@@ -12,7 +12,8 @@ const emit = defineEmits<{ (e: "navigate"): void }>();
 
 const route = useRoute();
 const session = useSessionStore();
-const project = computed(() => mockProject(props.projectId));
+const projects = useProjectStore();
+const project = computed(() => projects.currentProject(props.projectId));
 
 function isViewActive(viewId: string): boolean {
   return route.name === "project-view" && route.params.view === viewId;
@@ -44,7 +45,7 @@ const accountInitial = computed(() => (session.account?.email ?? "本").slice(0,
     <RouterLink
       class="project-picker"
       :to="{ name: 'projects' }"
-      aria-label="切换项目"
+      :aria-label="`切换项目，当前${project.name}`"
       @click="emit('navigate')"
     >
       <span class="project-symbol"><AppIcon name="folder" small /></span>

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { h } from "vue";
 
 import ShellHost from "@/components/layout/ShellHost.vue";
 import ClassificationPage from "@/pages/ClassificationPage.vue";
@@ -14,6 +15,7 @@ import SyncPage from "@/pages/SyncPage.vue";
 import TrashPage from "@/pages/TrashPage.vue";
 import ViewPage from "@/pages/ViewPage.vue";
 import { VIEW_IDS } from "@/app/views";
+import { useProjectStore } from "@/stores/project";
 import { useSessionStore } from "@/stores/session";
 
 // 应用部署在 /app/（设计文档 §3.1、§11.2），路由与文档路由表一一对应。
@@ -23,8 +25,26 @@ const VIEW_PATTERN = VIEW_IDS.join("|");
 export const router = createRouter({
   history: createWebHistory("/app/"),
   routes: [
-    // 根入口：P2 按登录态智能恢复（上次项目 / 项目选择），现阶段进项目空间。
-    { path: "/", redirect: "/projects" },
+    // 根入口智能恢复：上次可访问项目 → 单项目直接进入 → 否则项目选择（§3.2）。
+    // 占位组件永不渲染：beforeEnter 直接返回目标位置。
+    {
+      path: "/",
+      component: { render: () => h("div") },
+      beforeEnter: async () => {
+        const projects = useProjectStore();
+        if (projects.projects.length === 0) {
+          try {
+            await projects.load();
+          } catch {
+            return "/projects";
+          }
+        }
+        const entry = projects.entryProject();
+        return entry
+          ? { name: "project-view", params: { projectId: entry.id, view: "today" } }
+          : "/projects";
+      },
+    },
     { path: "/login", name: "login", component: LoginPage, meta: { public: true } },
     { path: "/register", name: "register", component: RegisterPage, meta: { public: true } },
     { path: "/projects", name: "projects", component: ProjectsPage },
