@@ -3,8 +3,8 @@
 普通用户浏览器客户端：受邀注册、登录即用、离线记录、多端接续。产品与前端设计见
 `docs/tasktips-web-design.md`，HTML 交互稿见 `design/`（`design/README.md`）。
 
-> 当前状态：P2 认证与项目空间完成（登录/邀请注册/项目选择/新建重命名，
-> MockApi 先行，云端 Web 会话接口落地后切换 HttpApi）。
+> 当前状态：P3 工作台完成（任务查询/筛选排序/自定义拖拽、目录标签管理、回收站，
+> 内存内容仓储先行，P5 替换为 Dexie）。
 > 正式业务功能按任务计划逐步接入，设计文档 §12.2 为实施顺序依据。
 
 ## 技术框架
@@ -30,7 +30,10 @@ src/
   pages/        路由页面（P1 为布局占位，业务页 P2 起接入）
   components/   手写基础组件：AppIcon/IconButton/AppDialog/AppToast/EmptyState/ThemeSwitcher
   components/layout/  应用壳：AppShell/AppSidebar/AppTopbar/CommandPalette/ShellHost
-  stores/       Pinia：theme（浅色/深色/跟随系统）/session（P1 mock，P2 替换）/ui（Toast）
+  components/list/    任务行/筛选/排序弹层/取色器
+  domain/       纯领域规则：标题派生/日期/色板/查询排序/分类校验（桌面端直译 + §4）
+  content/      内容仓储抽象 + 内存实现 + demo 种子（P5 替换为 Dexie）
+  stores/       Pinia：theme/session/ui/project/todos（查询状态）/classification（分类与回收站）
   styles/       base.css + theme.css（设计令牌）+ components.css（产品组件样式，类名对齐设计稿）
   api/          生成的契约类型 schema.d.ts（gitignore，由 generate:api 生成）
   editor/       双模式编辑会话（P4）
@@ -81,7 +84,11 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 - 当前验收：完整路由表与守卫、主题持久化与跟随系统、移动端抽屉、命令面板导航、
   弹层焦点归还（设计稿动效对齐：弹层/Toast/抽屉/主题过渡/骨架呼吸）。
 - P2 验收：登录/错误密码、邀请预填与激活、无效邀请拒绝、密码规则、新建/重命名项目、
-  智能入口（上次项目/单项目直入）、退出清理（单测 34 + e2e 13）。
+  智能入口（上次项目/单项目直入）、退出清理。
+- P3 验收：视图谓词/搜索/标签目录筛选/默认显式自定义排序、同批删除恢复/同名冲突/
+  标签软删与重命名 propagation、三级目录校验、回收站 30 天（单测 104 + e2e 20）。
+- 注意：内存内容仓储跳页即失（演示数据重置），E2E 内用站内导航覆盖跨页流程；
+  P5 Dexie 落地后消除该限制。
 
 ## 已知阻塞依赖
 

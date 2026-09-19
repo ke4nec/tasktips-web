@@ -1,19 +1,46 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink, useRoute } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import AppIcon from "@/components/AppIcon.vue";
 import { PROJECT_VIEWS } from "@/app/views";
+import { UNCATEGORIZED_LABEL } from "@/domain/types";
+import { useClassificationStore } from "@/stores/classification";
 import { useProjectStore } from "@/stores/project";
 import { useSessionStore } from "@/stores/session";
+import { useTodoStore } from "@/stores/todos";
 
 const props = defineProps<{ projectId: string }>();
 const emit = defineEmits<{ (e: "navigate"): void }>();
 
 const route = useRoute();
+const router = useRouter();
 const session = useSessionStore();
 const projects = useProjectStore();
+const todos = useTodoStore();
+const classification = useClassificationStore();
 const project = computed(() => projects.currentProject(props.projectId));
+
+function goFiltered(filter: () => void) {
+  todos.clearFilters();
+  filter();
+  emit("navigate");
+  router.push({ name: "project-view", params: { projectId: props.projectId, view: "all" } });
+}
+
+function filterByCategory(categoryId: string) {
+  goFiltered(() => todos.setCategoryFilter([categoryId]));
+}
+
+function filterUncategorized() {
+  goFiltered(() => todos.setCategoryFilter([], true));
+}
+
+function filterByTag(tag: string) {
+  goFiltered(() => {
+    todos.tags = [tag];
+  });
+}
 
 function isViewActive(viewId: string): boolean {
   return route.name === "project-view" && route.params.view === viewId;
@@ -66,9 +93,52 @@ const accountInitial = computed(() => (session.account?.email ?? "本").slice(0,
           @click="emit('navigate')"
         >
           <AppIcon :name="view.icon" />{{ view.title }}
+          <span class="nav-count">{{ todos.counts[view.id as keyof typeof todos.counts] }}</span>
         </RouterLink>
       </div>
     </nav>
+
+    <div class="nav-group">
+      <div class="nav-label"><span>目录</span></div>
+      <template v-for="level1 in classification.tree" :key="level1.id">
+        <button type="button" class="nav-link" @click="filterByCategory(level1.id)">
+          <AppIcon name="folder" />{{ level1.name }}
+          <span class="nav-count">{{ level1.todoCount }}</span>
+        </button>
+        <template v-for="level2 in level1.children" :key="level2.id">
+          <button type="button" class="nav-link nav-child" @click="filterByCategory(level2.id)">
+            {{ level2.name }}
+            <span class="nav-count">{{ level2.todoCount }}</span>
+          </button>
+          <button
+            v-for="level3 in level2.children"
+            :key="level3.id"
+            type="button"
+            class="nav-link nav-child"
+            @click="filterByCategory(level3.id)"
+          >
+            {{ level3.name }}
+            <span class="nav-count">{{ level3.todoCount }}</span>
+          </button>
+        </template>
+      </template>
+      <button type="button" class="nav-link" @click="filterUncategorized()">
+        <AppIcon name="inbox" />{{ UNCATEGORIZED_LABEL }}
+      </button>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label"><span>标签</span></div>
+      <button
+        v-for="tag in classification.tags.filter((item) => !item.deletedAt).slice(0, 12)"
+        :key="tag.id"
+        type="button"
+        class="nav-link"
+        @click="filterByTag(tag.name)"
+      >
+        <span class="dot" :style="{ color: tag.color }"></span>{{ tag.name }}
+      </button>
+    </div>
 
     <div class="nav-group">
       <div class="nav-label">整理</div>

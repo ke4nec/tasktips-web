@@ -28,8 +28,10 @@ test("登录后进入工作台：侧栏导航与顶栏可用", async ({ page }) 
   await expect(page.getByRole("link", { name: "TaskTips" })).toBeVisible();
   await expect(page.getByRole("link", { name: /今日/ }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "今日" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /新建任务/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: "搜索任务或命令" })).toBeVisible();
+  await expect(page.getByRole("banner").getByRole("button", { name: /新建任务/ })).toBeVisible();
+  await expect(
+    page.getByRole("banner").getByRole("button", { name: "搜索任务或命令" }),
+  ).toBeVisible();
 });
 
 test("主题切换后刷新仍保持", async ({ page }) => {
