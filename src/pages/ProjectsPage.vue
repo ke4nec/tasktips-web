@@ -61,12 +61,15 @@ async function onDialogConfirm() {
     return;
   }
   try {
-    const project =
-      dialogMode.value === "create"
-        ? await projects.create(name)
-        : await projects.rename(renameId.value, name);
-    dialogOpen.value = false;
-    await enter(project.id);
+    if (dialogMode.value === "create") {
+      const project = await projects.create(name);
+      dialogOpen.value = false;
+      await enter(project.id);
+    } else {
+      // 重命名后留在项目列表（store 已刷新列表），不打断用户继续整理。
+      await projects.rename(renameId.value, name);
+      dialogOpen.value = false;
+    }
   } catch (err) {
     dialogError.value = err instanceof ApiError ? err.message : "保存失败，请重试。";
   }

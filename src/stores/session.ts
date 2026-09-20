@@ -76,6 +76,14 @@ export const useSessionStore = defineStore("session", () => {
     });
     // 激活会话绑定在临时设备上；真实后端要求注册设备与令牌设备一致（§8.2），
     // 因此撤销临时会话后，用邮箱绑定的稳定设备身份重新登录。
+    applyAuth(result, result.account.email);
+    try {
+      // 先让激活令牌生效，再给临时设备补名称与平台，
+      // 避免设备列表出现 “Unnamed device · unknown”。
+      await api.registerDevice({ deviceId: provisionalId, name: "邀请激活会话" });
+    } catch {
+      // 命名失败不阻断激活流程
+    }
     try {
       await api.logout();
     } catch {
