@@ -88,8 +88,11 @@ export const router = createRouter({
 });
 
 // 未登录进入业务页一律回登录（P2 替换为真实会话校验与 redirect 回跳）。
-router.beforeEach((to) => {
+// 守卫先等待一次性的会话恢复：真实 HTTP 的 Cookie 刷新存在网络延迟，
+// 若不等待，整页刷新会被误判为未登录（§8.3）。
+router.beforeEach(async (to) => {
   const session = useSessionStore();
+  await session.ready();
   if (!to.meta.public && !session.isAuthenticated) {
     return { name: "login", query: { redirect: to.fullPath } };
   }

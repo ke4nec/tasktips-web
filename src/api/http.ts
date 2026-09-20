@@ -1,4 +1,10 @@
-import type { ActivateInput, ApiPort, ChangePasswordInput, RegisterDeviceInput } from "./port";
+import type {
+  ActivateInput,
+  ApiPort,
+  ChangePasswordInput,
+  LoginInput,
+  RegisterDeviceInput,
+} from "./port";
 import { ApiError, type Account, type AuthResult, type Device, type Project } from "./types";
 
 const APP_VERSION = "0.1.0";
@@ -26,7 +32,7 @@ function toDevice(data: ContractDevice): Device {
 }
 
 // 真实 HTTP 实现：业务接口直调现有云端 API；4 个 Web 会话 Cookie 接口
-// （§8.2）在 tasktips-cloud 落地前显式抛 WEB_AUTH_NOT_SUPPORTED，不静默降级。
+// （§8.2）对接 tasktips-cloud 的 /api/v1/web/auth/*，刷新令牌只走 HttpOnly Cookie。
 export class HttpApi implements ApiPort {
   constructor(
     private readonly baseUrl = "",
@@ -59,27 +65,32 @@ export class HttpApi implements ApiPort {
     return body as T;
   }
 
-  async login(): Promise<AuthResult> {
-    throw new ApiError(
-      "WEB_AUTH_NOT_SUPPORTED",
-      "浏览器会话登录接口尚未在云端实现，当前使用 Mock 模式。",
-      501,
+  async login(input: LoginInput): Promise<AuthResult> {
+    const data = await this.request<{ accessToken: string; expiresIn: number }>(
+      "/api/v1/web/auth/login",
+      { method: "POST", body: JSON.stringify(input), credentials: "include" },
+      false,
     );
+    const account = await this.meWith(data.accessToken);
+    return { ...data, account };
   }
 
-  async activateInvitation(_input: ActivateInput): Promise<AuthResult> {
-    void _input;
-    throw new ApiError(
-      "WEB_AUTH_NOT_SUPPORTED",
-      "邀请激活接口尚未在云端实现，当前使用 Mock 模式。",
-      501,
+  async activateInvitation(input: ActivateInput): Promise<AuthResult> {
+    const data = await this.request<{ accessToken: string; expiresIn: number }>(
+      "/api/v1/web/auth/invitations/activate",
+      { method: "POST", body: JSON.stringify(input), credentials: "include" },
+      false,
     );
+    const account = await this.meWith(data.accessToken);
+    return { ...data, account };
   }
 
   async refresh(): Promise<{ accessToken: string; expiresIn: number; account: Account }> {
+    // keepalive：页面刷新/关闭打断在途轮换时，请求仍会完成，新 Cookie 能落盘；
+    // 否则旧 Cookie 重放会触发服务端复用检测而吊销整个令牌族（§8.2）。
     const data = await this.request<{ accessToken: string; expiresIn: number }>(
       "/api/v1/web/auth/refresh",
-      { method: "POST", credentials: "include" },
+      { method: "POST", credentials: "include", keepalive: true },
       false,
     );
     const account = await this.meWith(data.accessToken);
@@ -150,10 +161,9 @@ export class HttpApi implements ApiPort {
   }
 
   async listProjects(): Promise<Project[]> {
-    const data = await this.request<{ projects: { id: string; name: string }[] }>(
-      "/api/v1/projects",
-    );
-    return data.projects.map((item) => ({ id: item.id, name: item.name }));
+    // 契约返回 { items: Project[] }（openapi ProjectList），不是 { projects }。
+    const data = await this.request<{ items: { id: string; name: string }[] }>("/api/v1/projects");
+    return data.items.map((item) => ({ id: item.id, name: item.name }));
   }
 
   async createProject(name: string): Promise<Project> {

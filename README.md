@@ -80,7 +80,8 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 - access token 仅存内存；设备 ID 按浏览器安装及账号隔离（`tasktips:device-id:<email>`）。
 - `generate:api` 默认读取 `../tasktips-cloud/contracts/openapi.yaml`，
   可用 `TASKTIPS_CLOUD_CONTRACT=/path/to/openapi.yaml` 覆盖。
-  Web 会话接口（§8.2 的 4 个 Cookie 接口）落地前输出占位声明，不阻塞构建。
+  Web 会话接口契约（§8.2 的 4 个 Cookie 接口）已由 tasktips-cloud 提供，
+  `generate:api` 将其纳入 `src/api/schema.d.ts` 类型。
 
 ## 测试
 
@@ -133,9 +134,13 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 
 ## 已知阻塞依赖与限制
 
-- 云端 4 个 Web 会话接口（`POST /api/v1/web/auth/*`）与 sync/history/snapshot
-  的浏览器侧 HTTP 语义在 `tasktips-cloud` 尚未落地：前端按契约 Mock 先行
-  （`MockApi`/`MockSyncServer`，状态经 localStorage 跨页持久），云端实现后替换。
+- 4 个 Web 会话 Cookie 接口（`POST /api/v1/web/auth/*`）已在 `tasktips-cloud` 落地
+  （`login/invitations/activate/refresh/logout`，Cookie `tasktips_web_refresh` +
+  `TASKTIPS_WEB_ORIGIN` Origin 校验 + `no-store`，集成测试见其
+  `crates/api/tests/web_auth.rs`）。`HttpApi` 已对接，`VITE_API_MODE=http npm run dev`
+  联调前需设置 `TASKTIPS_WEB_ORIGIN=http://127.0.0.1:5174`。
+- 云端 sync/history/snapshot 的浏览器侧 HTTP 语义仍未落地：前端按契约 Mock 先行
+  （`MockSyncServer`，状态经 localStorage 跨页持久），云端实现后替换。
 - 业务接口（`/me`、`/devices`、`/projects`、改密）已有 HttpApi 实现待联调。
 - 回收站本地保留不上传；分栏同步滚动为比例映射（正式块映射待补）；
   ZIP 超大空间不足、中文输入法真机组合键、焦点可见性需真机复核。

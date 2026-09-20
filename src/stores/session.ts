@@ -74,11 +74,14 @@ export const useSessionStore = defineStore("session", () => {
       password,
       deviceId: provisionalId,
     });
-    applyAuth(result, result.account.email);
-    const id = getOrCreateDeviceId(result.account.email);
-    deviceId.value = id;
-    await api.registerDevice({ deviceId: id, name: browserName() });
-    await afterAuth();
+    // 激活会话绑定在临时设备上；真实后端要求注册设备与令牌设备一致（§8.2），
+    // 因此撤销临时会话后，用邮箱绑定的稳定设备身份重新登录。
+    try {
+      await api.logout();
+    } catch {
+      // 临时会话清理失败不阻断；令牌 15 分钟后自然过期
+    }
+    await login(result.account.email, password);
   }
 
   async function refreshAccess(): Promise<boolean> {
@@ -150,6 +153,15 @@ export const useSessionStore = defineStore("session", () => {
     await login(email, DEMO_PASSWORD);
   }
 
+  // 启动恢复只跑一次：真实 HTTP 下 Cookie 刷新有网络延迟，路由守卫必须等它
+  // 完成再判定登录态，否则刷新页面会被误判为未登录（Mock 的同步 localStorage
+  // 恰好掩盖了这个竞态）。
+  let readyPromise: Promise<boolean> | null = null;
+  function ready(): Promise<boolean> {
+    readyPromise ??= restoreSession().catch(() => false);
+    return readyPromise;
+  }
+
   return {
     account,
     accessToken,
@@ -159,6 +171,7 @@ export const useSessionStore = defineStore("session", () => {
     activate,
     refreshAccess,
     restoreSession,
+    ready,
     logout,
     mockLoginQuick,
   };
