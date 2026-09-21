@@ -51,6 +51,54 @@ function setEditorScrollRatio(ratio: number) {
   el.scrollTop = ratio * (el.scrollHeight - el.clientHeight);
 }
 
+// ---- 块映射同步滚动（§5.2）：源码按空行分块，与预览顶层节点按序对应。 ----
+
+// 返回每个块的起始文档位置（连续非空行合并为一块，近似 Markdown 顶层节点）。
+function docBlocks(): number[] {
+  if (!view) return [];
+  const starts: number[] = [];
+  const doc = view.state.doc;
+  let atBlockStart = true;
+  for (let pos = 1; pos <= doc.lines; pos += 1) {
+    const line = doc.line(pos);
+    if (line.text.trim().length > 0) {
+      if (atBlockStart) {
+        starts.push(line.from);
+        atBlockStart = false;
+      }
+    } else {
+      atBlockStart = true;
+    }
+  }
+  return starts;
+}
+
+function topBlockProgress(): { index: number; progress: number } {
+  const el = view?.scrollDOM;
+  if (!view || !el) return { index: 0, progress: 0 };
+  const starts = docBlocks();
+  if (starts.length === 0) return { index: 0, progress: 0 };
+  const visible = view.lineBlockAtHeight(el.scrollTop);
+  let index = 0;
+  for (let i = 0; i < starts.length; i += 1) {
+    if (starts[i] <= visible.from) index = i;
+    else break;
+  }
+  const block = view.lineBlockAt(starts[index]);
+  const progress = Math.min(1, Math.max(0, (el.scrollTop - block.top) / Math.max(1, block.height)));
+  return { index, progress };
+}
+
+function scrollToBlock(index: number, progress: number) {
+  const el = view?.scrollDOM;
+  if (!view || !el || el.scrollHeight <= el.clientHeight) return;
+  const starts = docBlocks();
+  if (starts.length === 0) return;
+  const clamped = Math.min(starts.length - 1, Math.max(0, index));
+  const block = view.lineBlockAt(starts[clamped]);
+  el.scrollTop = block.top + progress * block.height;
+}
+
 function selectionOffsets(): { from: number; to: number } {
   const selection = view?.state.selection.main;
   return { from: selection?.from ?? 0, to: selection?.to ?? 0 };
@@ -141,6 +189,8 @@ defineExpose({
   currentText,
   editorScrollRatio,
   setEditorScrollRatio,
+  topBlockProgress,
+  scrollToBlock,
   selectionOffsets,
   setSelectionOffsets,
   refresh,

@@ -217,6 +217,50 @@ function setEditorScrollRatio(ratio: number) {
   el.scrollTop = ratio * (el.scrollHeight - el.clientHeight);
 }
 
+// ---- 块映射同步滚动（§5.2）：预览顶层节点与源码块按序对应。 ----
+
+function previewChildren(): HTMLElement[] {
+  // Milkdown 渲染为 .milkdown-host > .editor（ProseMirror 容器）> 顶层节点。
+  const editor =
+    host.value?.querySelector(".milkdown-host .editor") ??
+    host.value?.querySelector(".milkdown-host");
+  return editor ? [...editor.children].filter((el) => el instanceof HTMLElement) : [];
+}
+
+function childContentTop(wrap: HTMLElement, child: HTMLElement): number {
+  // 换算到滚动内容坐标：视口差 + 当前滚动量。
+  return child.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop;
+}
+
+function topBlockProgress(): { index: number; progress: number } {
+  const wrap = host.value as HTMLElement | null;
+  if (!wrap) return { index: 0, progress: 0 };
+  const children = previewChildren();
+  if (children.length === 0) return { index: 0, progress: 0 };
+  const top = wrap.scrollTop;
+  let index = children.length - 1;
+  for (let i = 0; i < children.length; i += 1) {
+    if (childContentTop(wrap, children[i]) + children[i].offsetHeight > top) {
+      index = i;
+      break;
+    }
+  }
+  const childTop = childContentTop(wrap, children[index]);
+  const height = Math.max(1, children[index].offsetHeight);
+  const progress = Math.min(1, Math.max(0, (top - childTop) / height));
+  return { index, progress };
+}
+
+function scrollToBlock(index: number, progress: number) {
+  const wrap = host.value as HTMLElement | null;
+  if (!wrap || wrap.scrollHeight <= wrap.clientHeight) return;
+  const children = previewChildren();
+  if (children.length === 0) return;
+  const clamped = Math.min(children.length - 1, Math.max(0, index));
+  const child = children[clamped];
+  wrap.scrollTop = childContentTop(wrap, child) + progress * child.offsetHeight;
+}
+
 function onHostKeydown(event: KeyboardEvent) {
   const modifier = event.ctrlKey || event.metaKey;
   if (!modifier || event.key.toLowerCase() !== "z") return;
@@ -281,6 +325,8 @@ defineExpose({
   focusAtEnd,
   editorScrollRatio,
   setEditorScrollRatio,
+  topBlockProgress,
+  scrollToBlock,
   loading,
 });
 </script>

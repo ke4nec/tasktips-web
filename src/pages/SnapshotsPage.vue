@@ -5,7 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import AppDialog from "@/components/AppDialog.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import type { RestoreInfo, SnapshotInfo } from "@/sync/protocol";
-import { mockSyncServer } from "@/stores/sync";
+import { syncServerFor } from "@/stores/sync";
 import { useTodoStore } from "@/stores/todos";
 import { useClassificationStore } from "@/stores/classification";
 import { useUiStore } from "@/stores/ui";
@@ -35,7 +35,7 @@ let pollTimer: ReturnType<typeof setInterval> | undefined;
 async function reload() {
   loading.value = true;
   try {
-    snapshots.value = await mockSyncServer.listSnapshots(projectId.value);
+    snapshots.value = await syncServerFor(projectId.value).listSnapshots(projectId.value);
   } finally {
     loading.value = false;
   }
@@ -47,7 +47,10 @@ onBeforeUnmount(() => {
 });
 
 async function onCreate() {
-  const created = await mockSyncServer.createSnapshot(projectId.value, createLabel.value.trim());
+  const created = await syncServerFor(projectId.value).createSnapshot(
+    projectId.value,
+    createLabel.value.trim(),
+  );
   createOpen.value = false;
   createLabel.value = "";
   ui.notify(`快照已创建（${created.id.slice(0, 8)}）`);
@@ -72,7 +75,7 @@ async function onRestoreConfirm() {
     // 确认文案明确作用范围；先保存本机内容（恢复副本）。
     const { content } = await import("@/content");
     await content.stashRecovery(projectId.value, "云端恢复前");
-    restoring.value = await mockSyncServer.createRestore(projectId.value, {
+    restoring.value = await syncServerFor(projectId.value).createRestore(projectId.value, {
       snapshotId: restoreTarget.value.id,
       reason,
     });
@@ -88,7 +91,7 @@ async function onRestoreConfirm() {
 
 async function pollRestore() {
   if (!restoring.value) return;
-  const info = await mockSyncServer.getRestore(projectId.value, restoring.value.id);
+  const info = await syncServerFor(projectId.value).getRestore(projectId.value, restoring.value.id);
   restoring.value = info;
   restoreProgress.value = info.status === "ready" ? 100 : Math.min(90, restoreProgress.value + 30);
   if (info.status === "ready") {
@@ -105,7 +108,7 @@ async function onCancelConfirm() {
     ui.notify("请填写取消原因");
     return;
   }
-  const info = await mockSyncServer.cancelRestore(
+  const info = await syncServerFor(projectId.value).cancelRestore(
     projectId.value,
     restoring.value.id,
     cancelReason.value.trim(),
@@ -176,11 +179,20 @@ function goConflicts() {
     <div class="panel">
       <div v-for="snapshot in snapshots" :key="snapshot.id" class="setting-row">
         <span class="grow">
-          <h3>{{ snapshot.label }}</h3>
+          <!-- 云端快照无说明字段：label 为空时回退显示时间点。 -->
+          <h3>{{ snapshot.label || `快照 · ${snapshot.createdAt}` }}</h3>
           <p class="small muted">{{ snapshot.createdAt }} · 序列 {{ snapshot.changeSequence }}</p>
         </span>
-        <span class="pill green">可恢复</span>
-        <button type="button" class="btn text" @click="askRestore(snapshot)">恢复到此快照</button>
+        <span v-if="snapshot.status === 'ready'" class="pill green">可恢复</span>
+        <span v-else class="pill">生成中</span>
+        <button
+          type="button"
+          class="btn text"
+          :disabled="snapshot.status !== 'ready'"
+          @click="askRestore(snapshot)"
+        >
+          恢复到此快照
+        </button>
       </div>
     </div>
 

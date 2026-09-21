@@ -346,7 +346,7 @@ export class MockSyncServer implements SyncServerPort {
     return this.payloads.has(hash);
   }
 
-  async putPayload(hash: string, data: string | ArrayBuffer): Promise<void> {
+  async putPayload(hash: string, data: string | ArrayBuffer, _mediaType?: string): Promise<void> {
     this.payloads.set(hash, data);
     this.persist();
   }

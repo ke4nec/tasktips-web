@@ -1,17 +1,31 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
+import { HttpSyncServer } from "@/api/httpSync";
 import { MockSyncServer } from "@/api/mockSync";
 import { content } from "@/content";
 import { sha256Hex } from "@/sync/serialize";
 import { subscribeInvalidation, SyncEngine } from "@/sync/engine";
 import type { ConflictRecord, SyncLogEntry, SyncStateData } from "@/sync/state";
+import type { SyncServerPort } from "@/sync/protocol";
 import { useClassificationStore } from "@/stores/classification";
 import { useSessionStore } from "@/stores/session";
 import { useTodoStore } from "@/stores/todos";
 
-// Mock 同步服务端（Mock 先行；云端 sync 落地后由 HttpSync 替换，引擎不变）。
+// Mock 同步服务端（Mock 模式共享单例；测试钩子 remoteWrite/bumpGeneration 挂在它上面）。
 export const mockSyncServer = new MockSyncServer();
+
+// 按模式选择同步服务端：VITE_API_MODE=http 时走真实云端
+// （引擎与页面统一从这里取，SyncServerPort 两个实现可互换）。
+export function syncServerFor(projectId: string): SyncServerPort {
+  if (import.meta.env.VITE_API_MODE !== "http") return mockSyncServer;
+  const session = useSessionStore();
+  return new HttpSyncServer({
+    projectId,
+    getToken: () => session.accessToken ?? null,
+    deviceId: () => session.deviceId ?? "web",
+  });
+}
 
 export type UiSyncStatus =
   | "synced"
@@ -49,7 +63,7 @@ export const useSyncStore = defineStore("sync", () => {
       const session = useSessionStore();
       engine = new SyncEngine({
         content,
-        server: mockSyncServer,
+        server: syncServerFor(projectId),
         deviceId: () => session.deviceId ?? "web",
         projectId,
         userId: session.account?.email ?? "local",

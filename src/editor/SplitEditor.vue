@@ -33,14 +33,16 @@ function setRatio(value: number) {
   emit("ratio", Math.max(30, Math.min(70, Math.round(value))));
 }
 
-// 同步滚动：原型级比例映射（设计稿行为）；正式块映射见代码注释债务。
+// 同步滚动：正文块与预览节点映射（§5.2 正式实现）——源码空行分块与预览
+// 顶层节点按序对应，块内按进度插值；数量不齐时索引收敛到边界块。
 function onSourceScroll() {
   if (!props.syncScroll || scrollGuard) return;
   const preview = previewRef.value;
   const source = sourceRef.value;
   if (!preview || !source) return;
+  const { index, progress } = source.topBlockProgress();
   scrollGuard = true;
-  preview.setEditorScrollRatio(source.editorScrollRatio());
+  preview.scrollToBlock(index, progress);
   requestAnimationFrame(() => {
     scrollGuard = false;
   });
@@ -51,8 +53,9 @@ function onPreviewScroll() {
   const preview = previewRef.value;
   const source = sourceRef.value;
   if (!preview || !source) return;
+  const { index, progress } = preview.topBlockProgress();
   scrollGuard = true;
-  source.setEditorScrollRatio(preview.editorScrollRatio());
+  source.scrollToBlock(index, progress);
   requestAnimationFrame(() => {
     scrollGuard = false;
   });

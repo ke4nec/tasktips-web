@@ -488,20 +488,24 @@ export class SyncEngine {
         revision: todo.revision,
         hash,
       });
-      await this.uploadPayload(hash, serializeTodo(todo, this.deps.deviceId()));
+      await this.uploadPayload(hash, serializeTodo(todo, this.deps.deviceId()), "text/markdown");
     }
     if (objects.length + tombstones.length < PUSH_BATCH) {
       const classification = await this.buildClassificationObject(state);
       if (classification) {
         objects.push(classification);
-        await this.uploadPayload(classification.hash, await this.classificationBytes());
+        await this.uploadPayload(
+          classification.hash,
+          await this.classificationBytes(),
+          "application/json",
+        );
       }
     }
     if (objects.length + tombstones.length < PUSH_BATCH) {
       const index = await this.buildIndexObject(state);
       if (index) {
         objects.push(index);
-        await this.uploadPayload(index.hash, await this.indexBytes(state));
+        await this.uploadPayload(index.hash, await this.indexBytes(state), "application/json");
       }
     }
     if (objects.length + tombstones.length < PUSH_BATCH) {
@@ -509,15 +513,19 @@ export class SyncEngine {
       for (const image of images) {
         if (objects.length + tombstones.length >= PUSH_BATCH) break;
         objects.push(image.object);
-        await this.uploadPayload(image.object.hash, image.bytes);
+        await this.uploadPayload(image.object.hash, image.bytes, "application/octet-stream");
       }
     }
     return { objects, tombstones };
   }
 
-  private async uploadPayload(hash: string, data: string | ArrayBuffer): Promise<void> {
+  private async uploadPayload(
+    hash: string,
+    data: string | ArrayBuffer,
+    mediaType: string,
+  ): Promise<void> {
     if (await this.deps.server.hasPayload(hash)) return;
-    await this.deps.server.putPayload(hash, data);
+    await this.deps.server.putPayload(hash, data, mediaType);
   }
 
   private async classificationBytes(): Promise<string> {
@@ -688,7 +696,7 @@ export class SyncEngine {
       if (!todo || todo.deletedAt) throw new SyncError("SERVER_ERROR", "本机版本已不存在。");
       const bytes = serializeTodo(todo, this.deps.deviceId());
       const hash = await sha256Hex(bytes);
-      await this.uploadPayload(hash, bytes);
+      await this.uploadPayload(hash, bytes, "text/markdown");
       const request: PushRequest = {
         requestId: newRequestId(
           this.deps.randomId ?? (() => Math.random().toString(36).slice(2, 10)),
@@ -714,7 +722,7 @@ export class SyncEngine {
     const bytes =
       kind === "classification" ? await this.classificationBytes() : await this.indexBytes(state);
     const hash = await sha256Hex(bytes);
-    await this.uploadPayload(hash, bytes);
+    await this.uploadPayload(hash, bytes, "application/json");
     const request: PushRequest = {
       requestId: newRequestId(
         this.deps.randomId ?? (() => Math.random().toString(36).slice(2, 10)),

@@ -7,7 +7,7 @@ import EmptyState from "@/components/EmptyState.vue";
 import { subscribeInvalidation } from "@/sync/engine";
 import type { HistoryEntry, SyncKind } from "@/sync/protocol";
 import { useSessionStore } from "@/stores/session";
-import { mockSyncServer } from "@/stores/sync";
+import { syncServerFor } from "@/stores/sync";
 
 const route = useRoute();
 const session = useSessionStore();
@@ -31,8 +31,14 @@ async function loadMore() {
   try {
     const after = entries.value.length === 0 ? null : nextSequence.value;
     const page = taskId.value
-      ? await mockSyncServer.objectHistory(projectId.value, "todo", taskId.value, after, PAGE)
-      : await mockSyncServer.history(projectId.value, after, PAGE);
+      ? await syncServerFor(projectId.value).objectHistory(
+          projectId.value,
+          "todo",
+          taskId.value,
+          after,
+          PAGE,
+        )
+      : await syncServerFor(projectId.value).history(projectId.value, after, PAGE);
     entries.value.push(...page.entries);
     nextSequence.value = page.nextSequence;
   } finally {
@@ -81,7 +87,7 @@ async function openDetail(entry: HistoryEntry) {
     return;
   }
   // 点击记录才下载对应 payload（§10.1）。
-  const payload = await mockSyncServer.getPayload(entry.hash);
+  const payload = await syncServerFor(projectId.value).getPayload(entry.hash);
   if (payload === null) {
     detail.value = { title: entry.id, body: "内容已不可用。", meta: `序列 ${entry.sequence}` };
     return;

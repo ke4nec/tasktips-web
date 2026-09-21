@@ -99,7 +99,8 @@ export interface SyncServerPort {
   pull(projectId: string, cursor: string, limit: number): Promise<SyncPage>;
   push(projectId: string, request: PushRequest): Promise<{ results: PushItemResult[] }>;
   hasPayload(hash: string): Promise<boolean>;
-  putPayload(hash: string, data: string | ArrayBuffer): Promise<void>;
+  /** mediaType 对应云端按对象类型的校验：todo=text/markdown、分类/索引=application/json、图片=二进制。 */
+  putPayload(hash: string, data: string | ArrayBuffer, mediaType?: string): Promise<void>;
   getPayload(hash: string): Promise<string | ArrayBuffer | null>;
   history(
     projectId: string,

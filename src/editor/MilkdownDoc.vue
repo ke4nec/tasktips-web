@@ -32,6 +32,8 @@ defineExpose({
   focusAtEnd: () => inner.value?.focusAtEnd(),
   editorScrollRatio: () => inner.value?.editorScrollRatio() ?? 0,
   setEditorScrollRatio: (ratio: number) => inner.value?.setEditorScrollRatio(ratio),
+  topBlockProgress: () => inner.value?.topBlockProgress() ?? { index: 0, progress: 0 },
+  scrollToBlock: (index: number, progress: number) => inner.value?.scrollToBlock(index, progress),
 });
 </script>
 

@@ -99,14 +99,14 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
   恢复副本上限保留、图片记录存取。
 - P6 验收：首次上传/增量拉取、双端编辑冲突与双向解决、远端删除冲突、墓碑跨端、
   幂等重试、单项拒绝、代次重建、退避与维护暂停、任务编辑锁只读。
-- P6 边界：回收站本地保留不上传；分栏同步滚动为比例映射；MockSyncServer 替代真实云端。
+- P6 边界：回收站本地保留不上传；分栏同步滚动为正文块映射；E2E 仍用 MockSyncServer。
 - P7 验收：历史分页与只读版本、快照创建/恢复轮询/取消/重新接入、ZIP 往返与非法拒绝、
   改密清会话、设备改名撤销（含本机）、存储占用与恢复副本（单测 156 + e2e 35）。
 - P7 待办（P8 联调）：历史/快照/恢复 HTTP 化、备份导出后退出选项、CSP/部署。
 - P4 验收：即时↔分栏内容一致、跨模式撤销重做、输入法组合延后切换、400ms/2s 自动保存
   与序号回执、图片魔数校验与 Blob 展示、元数据与完成切换（单测 115 + e2e 25）。
-- 已知债务：分栏同步滚动为比例映射（设计稿行为），正式块映射待 P8 前补齐；
-  预览与即时共用 Milkdown 管线，语法与安全规则一致。
+- 分栏同步滚动已升级为正文块与预览节点的块映射（§5.2），预览与即时共用
+  Milkdown 管线，语法与安全规则一致。
 
 ## 部署
 
@@ -139,8 +139,8 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
   `TASKTIPS_WEB_ORIGIN` Origin 校验 + `no-store`，集成测试见其
   `crates/api/tests/web_auth.rs`）。`HttpApi` 已对接，`VITE_API_MODE=http npm run dev`
   联调前需设置 `TASKTIPS_WEB_ORIGIN=http://127.0.0.1:5174`。
-- 云端 sync/history/snapshot 的浏览器侧 HTTP 语义仍未落地：前端按契约 Mock 先行
-  （`MockSyncServer`，状态经 localStorage 跨页持久），云端实现后替换。
-- 业务接口（`/me`、`/devices`、`/projects`、改密）已有 HttpApi 实现待联调。
-- 回收站本地保留不上传；分栏同步滚动为比例映射（正式块映射待补）；
+- 同步/历史/快照已通过 `HttpSyncServer`（`VITE_API_MODE=http`）对接真实云端，
+  并完成浏览器全链路联调（推送/轮换/历史/快照）；开发与 E2E 默认仍走 Mock。
+- 业务接口（`/me`、`/devices`、`/projects`、改密）已联调验证。
+- 回收站本地保留不上传；
   ZIP 超大空间不足、中文输入法真机组合键、焦点可见性需真机复核。

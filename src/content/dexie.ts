@@ -10,6 +10,7 @@ import {
   tagNameTaken,
 } from "@/domain/classification";
 import { isPaletteColor } from "@/domain/colors";
+import { newUlid } from "@/domain/ids";
 import type { CustomOrder } from "@/domain/query";
 import { deriveTitle } from "@/domain/title";
 import type { Category, CreateTodoInput, Tag, Todo, TodoPatch } from "@/domain/types";
@@ -304,7 +305,9 @@ export class DexieContent implements ContentPort {
       await this.ensureSeeded(scope, projectId);
       const body = input.body ?? "";
       const createdAt = this.now();
-      const id = await this.nextId(scope, "t");
+      // 云端同步要求 todo id 为 26 位 ULID（Crockford Base32）；目录/标签 id 仅为
+      // 分类对象内部字段，不受云端约束。
+      const id = newUlid();
       const todo: TodoRow = {
         key: this.keyOf(scope, id),
         scope,

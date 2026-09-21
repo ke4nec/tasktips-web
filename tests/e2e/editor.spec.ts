@@ -26,7 +26,7 @@ test("新建任务自动保存并落库", async ({ page }) => {
   await openEditor(page);
   await typeInInstant(page, "# E2E编辑标题\n\n正文第一行");
   // 落库即创建路由替换，是持久化成功的最强信号（保存标签 idle/已保存同文案）。
-  await expect(page).toHaveURL(/\/app\/p\/demo\/todo\/t-/, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/app\/p\/demo\/todo\/(t-|[0-9A-HJ-KM-NP-TV-Z]{26})/, { timeout: 15000 });
   // 编辑器不再有独立标题栏（对齐设计稿）：标题即正文首行，仍在即时编辑区中。
   await expect(page.locator(".editor-content .ProseMirror").first()).toContainText("E2E编辑标题");
 });
@@ -34,7 +34,7 @@ test("新建任务自动保存并落库", async ({ page }) => {
 test("即时→分栏→即时内容一致", async ({ page }) => {
   await openEditor(page);
   await typeInInstant(page, "# 往返标题\n\n- [ ] 清单项");
-  await expect(page).toHaveURL(/\/app\/p\/demo\/todo\/t-/, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/app\/p\/demo\/todo\/(t-|[0-9A-HJ-KM-NP-TV-Z]{26})/, { timeout: 15000 });
 
   await page.getByRole("button", { name: "分栏", exact: true }).click();
   const source = page.locator(".source-editor-host .cm-content");
@@ -49,7 +49,7 @@ test("即时→分栏→即时内容一致", async ({ page }) => {
 test("跨模式撤销与重做", async ({ page }) => {
   await openEditor(page);
   await typeInInstant(page, "第一版");
-  await expect(page).toHaveURL(/\/app\/p\/demo\/todo\/t-/, { timeout: 15000 });
+  await expect(page).toHaveURL(/\/app\/p\/demo\/todo\/(t-|[0-9A-HJ-KM-NP-TV-Z]{26})/, { timeout: 15000 });
 
   await page.getByRole("button", { name: "分栏", exact: true }).click();
   const source = page.locator(".source-editor-host .cm-content");
