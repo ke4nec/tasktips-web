@@ -1,5 +1,8 @@
 # TaskTips Web 静态镜像：构建产物 + nginx（/app/ 基座）。
 FROM node:22-alpine AS build
+# 生产镜像连真实后端（同源 /api 反代）；mock 仅供本地 UI 开发与 E2E
+# （src/api/index.ts 默认 MockApi，VITE_API_MODE=http 切换 HttpApi）。
+ENV VITE_API_MODE=http
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci
