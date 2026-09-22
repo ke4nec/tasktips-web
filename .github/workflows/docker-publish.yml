@@ -1,8 +1,8 @@
 name: Docker Publish
 
 # Builds the TaskTips Web image and publishes it to Docker Hub:
-#   - push to master -> latest, master, sha-<commit>
-#   - push of a v* tag -> vX.Y.Z, X.Y.Z, X.Y, sha-<commit>
+#   - push to master -> latest only
+#   - push of a v* tag -> vX.Y.Z, X.Y.Z, X.Y
 # Pull requests only build the image so Dockerfile changes are validated
 # without publishing anything.
 #
@@ -57,13 +57,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.repo.outputs.name }}
+          # Branch pushes publish only the floating `latest`; version tags
+          # come exclusively from `vX.Y.Z` release tags (no `master`/`sha-*`
+          # aliases — pin deployments to a release tag instead). The pr-N tag
+          # only names build-only validation images; PRs never push.
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha
+            type=ref,event=pr
           labels: |
             org.opencontainers.image.title=TaskTips Web
 
