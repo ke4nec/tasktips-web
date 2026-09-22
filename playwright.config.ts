@@ -7,9 +7,12 @@ export default defineConfig({
   fullyParallel: true,
   workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 2 : 0,
+  timeout: process.env.CI ? 60_000 : undefined,
+  expect: { timeout: process.env.CI ? 15_000 : undefined },
   use: {
     baseURL: "http://127.0.0.1:5174",
     trace: "on-first-retry",
+    launchOptions: process.env.CI ? { args: ["--disable-dev-shm-usage"] } : undefined,
   },
   webServer: {
     command: "npm run dev",
