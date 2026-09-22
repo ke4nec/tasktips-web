@@ -15,25 +15,28 @@ describe("任务编辑会话锁", () => {
   });
 
   it("锁被占用时返回 null（只读）", async () => {
-    const request = vi.fn(async () => false);
+    const request = vi.fn(
+      async (_name: string, _opts: object, callback: (lock: Lock | null) => unknown) =>
+        callback(null),
+    );
     vi.stubGlobal("navigator", { locks: { request } });
     await expect(tryAcquireTaskLock("p", "t")).resolves.toBeNull();
     expect(request).toHaveBeenCalledOnce();
   });
 
   it("获取成功返回释放函数", async () => {
-    let releaseInner: (() => void) | null = null;
+    let holding: Promise<unknown> | null = null;
     const request = vi.fn(
-      async (_name: string, _opts: object, callback: () => Promise<boolean>) => {
-        const holding = callback();
-        releaseInner = () => void holding;
-        return true;
+      async (_name: string, _opts: object, callback: (lock: Lock | null) => unknown) => {
+        holding = callback({} as Lock) as Promise<unknown>;
+        return holding;
       },
     );
     vi.stubGlobal("navigator", { locks: { request } });
     const release = await tryAcquireTaskLock("p", "t");
     expect(release).not.toBeNull();
-    expect(releaseInner).not.toBeNull();
+    expect(holding).not.toBeNull();
     release?.();
+    await holding;
   });
 });

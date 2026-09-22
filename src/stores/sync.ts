@@ -109,17 +109,54 @@ export const useSyncStore = defineStore("sync", () => {
     await Promise.all([todos.load(projectId), classification.load(projectId)]);
   }
 
-  async function syncNowManual(projectId: string = currentProjectId.value) {
-    if (!projectId || syncing.value) return;
+  async function syncNowManual(
+    projectId: string = currentProjectId.value,
+    options: { requireSuccess?: boolean } = {},
+  ) {
+    if (!projectId) return "idle";
+    if (syncing.value) {
+      if (options.requireSuccess) throw new Error("同步正在进行，请稍后再退出。");
+      return "busy";
+    }
     syncing.value = true;
     status.value = "syncing";
     try {
-      await getEngine(projectId).syncNow({ manual: true });
+      const result = await getEngine(projectId).syncNow({ manual: true });
       await reloadContent(projectId);
+      if (options.requireSuccess && result !== "synced") {
+        throw new Error(
+          result === "conflict"
+            ? "同步发现冲突，请先处理冲突后再退出。"
+            : "退出前同步未完成，请检查网络后重试。",
+        );
+      }
+      return result;
     } finally {
       syncing.value = false;
       await refresh(projectId);
     }
+  }
+
+  function resetProject(projectId: string) {
+    const scope = scopeOf(projectId);
+    engines.get(scope)?.invalidate();
+    engines.delete(scope);
+    if (currentProjectId.value === projectId) {
+      status.value = "idle";
+      syncing.value = false;
+      detail.value = null;
+      pendingCount.value = 0;
+    }
+  }
+
+  function resetContext() {
+    for (const engine of engines.values()) engine.invalidate();
+    engines.clear();
+    currentProjectId.value = "";
+    status.value = "idle";
+    syncing.value = false;
+    detail.value = null;
+    pendingCount.value = 0;
   }
 
   async function ensureProject(projectId: string) {
@@ -196,6 +233,7 @@ export const useSyncStore = defineStore("sync", () => {
           void getEngine(currentProjectId.value).syncNow();
         }
       });
+      window.addEventListener("tasktips:session-reset", resetContext);
       // 前台每 60 秒检查（§9.3）。
       setInterval(() => {
         if (document.visibilityState === "visible" && currentProjectId.value) {
@@ -233,6 +271,8 @@ export const useSyncStore = defineStore("sync", () => {
     resolveConflict,
     refresh,
     getEngine,
+    resetProject,
+    resetContext,
   };
 });
 

@@ -60,9 +60,14 @@ async function openLogout() {
 }
 
 async function onLogoutConfirm(choice: LogoutChoice) {
-  logoutOpen.value = false;
-  await performLogout(choice, sync.currentProjectId || undefined);
-  await router.push({ name: "login" });
+  try {
+    await performLogout(choice, sync.currentProjectId || undefined);
+    logoutOpen.value = false;
+    await router.push({ name: "login" });
+  } catch (err) {
+    ui.notify(err instanceof Error ? err.message : "退出前同步失败，请重试");
+    logoutOpen.value = true;
+  }
 }
 </script>
 

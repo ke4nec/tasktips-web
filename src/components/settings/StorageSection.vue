@@ -10,6 +10,7 @@ import { useClassificationStore } from "@/stores/classification";
 import { useSessionStore } from "@/stores/session";
 import { useTodoStore } from "@/stores/todos";
 import { useUiStore } from "@/stores/ui";
+import { useSyncStore } from "@/stores/sync";
 import { ApiError } from "@/api/types";
 
 const props = defineProps<{ projectId: string }>();
@@ -17,6 +18,7 @@ const session = useSessionStore();
 const todos = useTodoStore();
 const classification = useClassificationStore();
 const ui = useUiStore();
+const sync = useSyncStore();
 
 const quota = ref<{ usage?: number; quota?: number }>({});
 const persisted = ref<boolean | null>(null);
@@ -123,8 +125,10 @@ async function deleteRecovery(copy: RecoveryCopy) {
 
 async function onClearConfirm() {
   clearOpen.value = false;
+  sync.resetProject(props.projectId);
   await content.clearProjectData(props.projectId);
   await Promise.all([todos.load(props.projectId), classification.load(props.projectId)]);
+  await sync.ensureProject(props.projectId);
   ui.notify("已清理本机项目副本，下次打开会重新下载");
 }
 </script>

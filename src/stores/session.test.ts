@@ -54,7 +54,7 @@ describe("浏览器会话（MockApi）", () => {
     logoutSpy.mockRestore();
     await session.restoreSession();
     expect(localStorage.getItem(PENDING_LOGOUT_KEY)).toBeNull();
-    expect(session.isAuthenticated).toBe(true);
+    expect(session.isAuthenticated).toBe(false);
   });
 
   it("退出后清理内存会话与上次项目", async () => {

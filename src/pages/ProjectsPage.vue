@@ -11,10 +11,12 @@ import { ApiError } from "@/api/types";
 import { performLogout } from "@/app/logout";
 import { useProjectStore } from "@/stores/project";
 import { useSyncStore } from "@/stores/sync";
+import { useUiStore } from "@/stores/ui";
 
 const router = useRouter();
 const projects = useProjectStore();
 const sync = useSyncStore();
+const ui = useUiStore();
 
 const loading = ref(true);
 const loadError = ref("");
@@ -87,9 +89,14 @@ async function openLogout() {
 }
 
 async function onLogoutConfirm(choice: LogoutChoice) {
-  logoutOpen.value = false;
-  await performLogout(choice, projects.entryProject()?.id);
-  await router.push({ name: "login" });
+  try {
+    await performLogout(choice, projects.entryProject()?.id);
+    logoutOpen.value = false;
+    await router.push({ name: "login" });
+  } catch (err) {
+    ui.notify(err instanceof Error ? err.message : "退出前同步失败，请重试");
+    logoutOpen.value = true;
+  }
 }
 </script>
 

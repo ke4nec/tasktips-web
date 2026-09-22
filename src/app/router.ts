@@ -82,7 +82,7 @@ export const router = createRouter({
   // 前进后退恢复滚动位置（设计文档 §3.1；列表筛选/选中态由 P3 store 保持）。
   scrollBehavior(to, _from, savedPosition) {
     if (savedPosition) return savedPosition;
-    if (to.hash) return { el: to.hash };
+    if (to.hash && /^#[A-Za-z][A-Za-z0-9_:-]*$/.test(to.hash)) return { el: to.hash };
     return { top: 0 };
   },
 });

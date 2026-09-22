@@ -9,7 +9,7 @@ export async function performLogout(choice: LogoutChoice, projectId?: string): P
   const session = useSessionStore();
   const sync = useSyncStore();
   if (choice === "sync" && projectId) {
-    await sync.syncNowManual(projectId).catch(() => undefined);
+    await sync.syncNowManual(projectId, { requireSuccess: true });
   }
   if (choice === "export" && projectId) {
     const blob = await exportBackup(content, projectId, session.deviceId ?? "web");
@@ -17,5 +17,7 @@ export async function performLogout(choice: LogoutChoice, projectId?: string): P
   }
   const email = session.account?.email;
   await session.logout();
+  // 认证退出成功后让所有引擎失效，避免清理本地数据后旧请求回写内容。
+  sync.resetContext();
   if (email) await content.clearUserData(email).catch(() => undefined);
 }

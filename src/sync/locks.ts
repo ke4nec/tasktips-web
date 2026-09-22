@@ -11,18 +11,34 @@ export async function tryAcquireTaskLock(
       ? (navigator as Navigator & { locks?: LockManager }).locks
       : undefined;
   if (!locks) return () => undefined;
-  let release: () => void = () => undefined;
-  try {
-    const held = await locks.request(
-      `tasktips-task:${projectId}:${todoId}`,
-      { ifAvailable: true },
-      () =>
-        new Promise<boolean>((resolve) => {
-          release = () => resolve(true);
-        }),
-    );
-    return held ? () => release() : null;
-  } catch {
-    return null;
-  }
+  return new Promise<(() => void) | null>((resolve) => {
+    let settled = false;
+    void locks
+      .request(`tasktips-task:${projectId}:${todoId}`, { ifAvailable: true }, (lock) => {
+        if (!lock) {
+          settled = true;
+          resolve(null);
+          return false;
+        }
+
+        let released = false;
+        let releaseHeldLock = () => undefined;
+        const held = new Promise<boolean>((resolveHeld) => {
+          releaseHeldLock = () => {
+            if (released) return;
+            released = true;
+            resolveHeld(true);
+          };
+        });
+        settled = true;
+        resolve(() => releaseHeldLock());
+        return held;
+      })
+      .catch(() => {
+        if (!settled) {
+          settled = true;
+          resolve(null);
+        }
+      });
+  });
 }

@@ -14,6 +14,25 @@ export const PENDING_LOGOUT_KEY = "tasktips:pending-logout";
 let currentToken: string | null = null;
 setTokenProvider(() => currentToken);
 
+let authQueue: Promise<unknown> = Promise.resolve();
+
+async function withAuthLock<T>(task: () => Promise<T>): Promise<T> {
+  const locks =
+    typeof navigator !== "undefined"
+      ? (navigator as Navigator & { locks?: LockManager }).locks
+      : undefined;
+  if (locks) {
+    return locks.request("tasktips-auth", { mode: "exclusive" }, task);
+  }
+
+  const run = authQueue.then(task, task);
+  authQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 function deviceKey(email: string): string {
   return `${DEVICE_ID_PREFIX}:${email}`;
 }
@@ -60,8 +79,16 @@ export const useSessionStore = defineStore("session", () => {
   async function login(email: string, password: string) {
     const normalized = email.trim();
     const id = getOrCreateDeviceId(normalized);
-    const result = await api.login({ email: normalized, password, deviceId: id });
-    applyAuth(result, normalized);
+    await withAuthLock(async () => {
+      const loginResult = await api.login({ email: normalized, password, deviceId: id });
+      applyAuth(loginResult, normalized);
+      return loginResult;
+    });
+    try {
+      localStorage.removeItem(PENDING_LOGOUT_KEY);
+    } catch {
+      // 忽略
+    }
     await api.registerDevice({ deviceId: id, name: browserName() });
     await afterAuth();
   }
@@ -69,11 +96,13 @@ export const useSessionStore = defineStore("session", () => {
   async function activate(invitationToken: string, password: string) {
     // 账号邮箱由邀请绑定，调用成功后从结果中取得，不信任表单输入。
     const provisionalId = getOrCreateDeviceId(`invite:${invitationToken}`);
-    const result = await api.activateInvitation({
-      invitationToken,
-      password,
-      deviceId: provisionalId,
-    });
+    const result = await withAuthLock(() =>
+      api.activateInvitation({
+        invitationToken,
+        password,
+        deviceId: provisionalId,
+      }),
+    );
     // 激活会话绑定在临时设备上；真实后端要求注册设备与令牌设备一致（§8.2），
     // 因此撤销临时会话后，用邮箱绑定的稳定设备身份重新登录。
     applyAuth(result, result.account.email);
@@ -85,7 +114,7 @@ export const useSessionStore = defineStore("session", () => {
       // 命名失败不阻断激活流程
     }
     try {
-      await api.logout();
+      await withAuthLock(() => api.logout());
     } catch {
       // 临时会话清理失败不阻断；令牌 15 分钟后自然过期
     }
@@ -94,8 +123,10 @@ export const useSessionStore = defineStore("session", () => {
 
   async function refreshAccess(): Promise<boolean> {
     try {
-      const result = await api.refresh();
-      applyAuth(result, result.account.email);
+      await withAuthLock(async () => {
+        const result = await api.refresh();
+        applyAuth(result, result.account.email);
+      });
       return true;
     } catch {
       clearAuth();
@@ -103,24 +134,33 @@ export const useSessionStore = defineStore("session", () => {
     }
   }
 
-  // 启动恢复：先刷新会话再读身份（§8.3），失败即未登录态。
+  // 启动恢复：挂起退出必须先完成远端注销，不能先刷新出旧会话（§8.3）。
   // 成功后补注册本机设备（upsert，刷新页面不重复创建 §8.1），
   // 并补执行离线退出时挂起的远端注销（§8.3）。
   async function restoreSession(): Promise<boolean> {
+    let hasPendingLogout = false;
+    try {
+      hasPendingLogout = localStorage.getItem(PENDING_LOGOUT_KEY) === "1";
+    } catch {
+      // 忽略
+    }
+    if (hasPendingLogout) {
+      clearAuth();
+      try {
+        await withAuthLock(() => api.logout());
+        localStorage.removeItem(PENDING_LOGOUT_KEY);
+      } catch {
+        // 保留标记，下一次联网恢复时重试；当前窗口维持未登录态。
+      }
+      return false;
+    }
+
     const ok = await refreshAccess();
     if (!ok || !account.value || !deviceId.value) return ok;
     try {
       await api.registerDevice({ deviceId: deviceId.value, name: browserName() });
     } catch {
       // 设备注册失败不阻断进入工作台
-    }
-    try {
-      if (localStorage.getItem(PENDING_LOGOUT_KEY) === "1") {
-        await api.logout();
-        localStorage.removeItem(PENDING_LOGOUT_KEY);
-      }
-    } catch {
-      // 下次恢复时重试
     }
     return ok;
   }
@@ -134,7 +174,7 @@ export const useSessionStore = defineStore("session", () => {
 
   async function logout() {
     try {
-      await api.logout();
+      await withAuthLock(() => api.logout());
     } catch (error) {
       // 离线退出：本地访问立即终止，远端注销挂起待下次联网（§8.3）。
       if (error instanceof ApiError && error.code === "NETWORK_ERROR") {
@@ -149,6 +189,9 @@ export const useSessionStore = defineStore("session", () => {
     }
     clearAuth();
     useProjectStore().reset();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("tasktips:session-reset"));
+    }
     try {
       localStorage.removeItem(LAST_PROJECT_KEY);
     } catch {

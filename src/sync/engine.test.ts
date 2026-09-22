@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import { MockSyncServer } from "@/api/mockSync";
 import { DexieContent } from "@/content/dexie";
-import { serializeTodo, sha256Hex } from "@/sync/serialize";
+import {
+  serializeClassification,
+  serializeIndex,
+  serializeTodo,
+  sha256Hex,
+} from "@/sync/serialize";
 import { SyncEngine } from "@/sync/engine";
 import { SyncError } from "@/sync/protocol";
 
@@ -111,6 +116,56 @@ describe("同步引擎", () => {
       expect(after.conflicts).toHaveLength(0);
       const current = (await content.listTodos("demo")).find((todo) => todo.id === target.id);
       expect(current?.body).toBe("# 本机修改");
+    } finally {
+      await content.deleteDatabase();
+    }
+  });
+
+  it("分类与排序索引的双端编辑进入冲突", async () => {
+    const { content, server, engine } = setup();
+    try {
+      await engine.syncNow({ manual: true });
+      const categories = await content.listCategories("demo");
+      const beforeTags = await content.listTags("demo");
+      await content.createTag("demo", { name: "本机标签" });
+      const remoteTags = beforeTags.map((tag, index) =>
+        index === 0 ? { ...tag, name: "远端标签" } : tag,
+      );
+      const remoteClassification = serializeClassification(categories, remoteTags);
+      const classificationHash = await sha256Hex(remoteClassification);
+      await server.putPayload(classificationHash, remoteClassification);
+      server.remoteWrite("demo", "classification", "classification", classificationHash);
+
+      const todos = (await content.listTodos("demo")).filter((todo) => !todo.deletedAt);
+      const localOrderId = todos[0]?.id;
+      if (!localOrderId) throw new Error("缺少可排序任务");
+      await content.setCustomOrder("demo", "all", [localOrderId]);
+      const remoteIndex = serializeIndex({
+        customOrder: { inbox: [], all: [] },
+        tombstones: [],
+      });
+      const indexHash = await sha256Hex(remoteIndex);
+      await server.putPayload(indexHash, remoteIndex);
+      server.remoteWrite("demo", "index", "index", indexHash);
+
+      const status = await engine.syncNow({ manual: true });
+      expect(status).toBe("conflict");
+      expect((await engine.getState()).conflicts.map((item) => `${item.kind}/${item.id}`)).toEqual(
+        expect.arrayContaining(["classification/classification", "index/index"]),
+      );
+      for (const conflict of await engine.getState().then((state) => state.conflicts)) {
+        await engine.resolveUseRemote(conflict.kind, conflict.id);
+      }
+      const afterRemote = await content.listTags("demo");
+      const secondClassification = serializeClassification(categories, [
+        { ...afterRemote[0], name: "远端第二版" },
+        ...afterRemote.slice(1),
+      ]);
+      const secondClassificationHash = await sha256Hex(secondClassification);
+      await server.putPayload(secondClassificationHash, secondClassification);
+      server.remoteWrite("demo", "classification", "classification", secondClassificationHash);
+      server.remoteWrite("demo", "index", "index", indexHash);
+      expect(await engine.syncNow({ manual: true })).toBe("synced");
     } finally {
       await content.deleteDatabase();
     }

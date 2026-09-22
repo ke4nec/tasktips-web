@@ -359,6 +359,7 @@ defineExpose({
 
 .milkdown-host .ProseMirror {
   outline: none;
+  white-space: pre-wrap;
   line-height: 1.9;
   color: var(--text);
   flex: 1;

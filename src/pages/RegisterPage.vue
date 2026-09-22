@@ -26,7 +26,11 @@ function takeInvitationFromHash() {
   const match = hash.match(/invitation=([^&]+)/);
   if (match) {
     invitationToken.value = decodeURIComponent(match[1]);
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      window.location.pathname + window.location.search,
+    );
   }
 }
 

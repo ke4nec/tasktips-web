@@ -47,6 +47,9 @@ const PULL_LIMIT = 500;
 const PUSH_BATCH = 100;
 const BACKOFF_STEPS = [30_000, 60_000, 120_000, 300_000];
 
+type RawLocal = { raw: string; revision: number; seeded?: boolean };
+type LocalSyncValue = Todo | RawLocal | Blob;
+
 function newRequestId(randomId: () => string): string {
   return `push-${Date.now()}-${randomId()}`;
 }
@@ -321,15 +324,15 @@ export class SyncEngine {
   ): Promise<void> {
     const key = changeKey(envelope);
     const base = state.baselines[key];
-    const raw = await this.readLocal(envelope.kind, envelope.id, todoMap);
+    const raw = await this.readLocal(envelope.kind, envelope.id, todoMap, state);
     // 演示种子非用户意图：无基线时视为缺席，直接采用远端（§7.2 种子仅为本地演示）。
-    const local = raw !== null && (raw as Todo).seeded === true && !base ? null : raw;
+    const local = raw !== null && "seeded" in raw && raw.seeded === true && !base ? null : raw;
     const localHash = local ? await this.hashLocal(envelope.kind, local) : null;
     const dirty =
       local !== null &&
       (!base ||
         localHash !== base.hash ||
-        this.localRevision(envelope.kind, local) > base.revision);
+        (envelope.kind === "todo" && this.localRevision(envelope.kind, local) > base.revision));
 
     // 回收站本地保留：远端变更不复活已删除任务，仅跟进基线（P6 边界）。
     if (envelope.kind === "todo" && local !== null && (local as Todo).deletedAt) {
@@ -378,12 +381,14 @@ export class SyncEngine {
   ): Promise<void> {
     const key = `${tomb.kind}/${tomb.id}`;
     const base = state.baselines[key];
-    const raw = await this.readLocal(tomb.kind, tomb.id, todoMap);
-    const local = raw !== null && (raw as Todo).seeded === true && !base ? null : raw;
+    const raw = await this.readLocal(tomb.kind, tomb.id, todoMap, state);
+    const local = raw !== null && "seeded" in raw && raw.seeded === true && !base ? null : raw;
     if (local !== null) {
       const localHash = await this.hashLocal(tomb.kind, local);
       const dirty =
-        !base || localHash !== base.hash || this.localRevision(tomb.kind, local) > base.revision;
+        !base ||
+        localHash !== base.hash ||
+        (tomb.kind === "todo" && this.localRevision(tomb.kind, local) > base.revision);
       if (dirty) {
         this.upsertConflict(state, {
           kind: tomb.kind,
@@ -598,12 +603,19 @@ export class SyncEngine {
     const images = await this.deps.content.listImages(this.deps.projectId);
     for (const image of images) {
       const key = `image/${image.path}`;
-      if (state.baselines[key]) continue;
       if (this.conflictSettled(state, "image", image.path)) continue;
       const bytes = await image.blob.arrayBuffer();
       const hash = await sha256Hex(bytes);
+      const baseline = state.baselines[key];
+      if (baseline && baseline.hash === hash) continue;
       result.push({
-        object: { kind: "image", id: image.path, baseRevision: 0, revision: 1, hash },
+        object: {
+          kind: "image",
+          id: image.path,
+          baseRevision: baseline?.revision ?? 0,
+          revision: (baseline?.revision ?? 0) + 1,
+          hash,
+        },
         bytes,
       });
     }
@@ -718,6 +730,35 @@ export class SyncEngine {
       await this.submitPending(state, this.epoch);
       return;
     }
+    if (kind === "image") {
+      const images = await this.deps.content.listImages(this.deps.projectId);
+      const image = images.find((item) => item.path === id);
+      if (!image) throw new SyncError("SERVER_ERROR", "本机图片已不存在。");
+      const bytes = await image.blob.arrayBuffer();
+      const hash = await sha256Hex(bytes);
+      await this.uploadPayload(hash, bytes, "application/octet-stream");
+      const request: PushRequest = {
+        requestId: newRequestId(
+          this.deps.randomId ?? (() => Math.random().toString(36).slice(2, 10)),
+        ),
+        generation: state.generation,
+        objects: [
+          {
+            kind,
+            id,
+            baseRevision: conflict.remoteRevision,
+            revision: conflict.remoteRevision + 1,
+            hash,
+          },
+        ],
+        tombstones: [],
+      };
+      state.pending = request;
+      await this.saveState();
+      await this.submitPending(state, this.epoch);
+      notifyScope(this.scope);
+      return;
+    }
     // classification/index：重算当前字节后以远端基线提交。
     const bytes =
       kind === "classification" ? await this.classificationBytes() : await this.indexBytes(state);
@@ -779,7 +820,7 @@ export class SyncEngine {
     const conflict = state.conflicts.find((item) => changeKey(item) === key);
     if (!conflict || !conflict.remoteHash) return true;
     // 本地是否变化
-    const local = await this.readLocal(kind, id);
+    const local = await this.readLocal(kind, id, undefined, state);
     const localHash = local ? await this.hashLocal(kind, local) : null;
     if (localHash !== conflict.localHash && !(local === null && conflict.remoteDeleted)) {
       return false;
@@ -793,7 +834,8 @@ export class SyncEngine {
     kind: SyncKind,
     id: string,
     todoMap?: Map<string, Todo>,
-  ): Promise<Todo | { raw: string } | Blob | null> {
+    state?: SyncStateData,
+  ): Promise<LocalSyncValue | null> {
     if (kind === "todo") {
       if (todoMap) return todoMap.get(id) ?? null;
       const todos = await this.deps.content.listTodos(this.deps.projectId);
@@ -803,22 +845,53 @@ export class SyncEngine {
       const images = await this.deps.content.listImages(this.deps.projectId);
       return images.find((item) => item.path === id)?.blob ?? null;
     }
+    if (kind === "classification") {
+      const [categories, tags, revisions] = await Promise.all([
+        this.deps.content.listCategories(this.deps.projectId),
+        this.deps.content.listTags(this.deps.projectId),
+        this.deps.content.getContentRevisions(this.deps.projectId),
+      ]);
+      return {
+        raw: serializeClassification(categories, tags),
+        revision: revisions.classificationRev,
+        seeded:
+          (categories.length === 0 && tags.length === 0) ||
+          (categories.length > 0 &&
+            tags.length > 0 &&
+            categories.every((category) => category.seeded === true) &&
+            tags.every((tag) => tag.seeded === true)),
+      };
+    }
+    if (kind === "index") {
+      if (!state) return null;
+      const [order, pending, revisions] = await Promise.all([
+        this.deps.content.getCustomOrder(this.deps.projectId),
+        this.deps.content.getPendingTombstones(this.deps.projectId),
+        this.deps.content.getContentRevisions(this.deps.projectId),
+      ]);
+      return {
+        raw: await this.indexBytes(state),
+        revision: revisions.indexRev,
+        seeded: order.inbox.length === 0 && order.all.length === 0 && pending.length === 0,
+      };
+    }
     return null;
   }
 
-  private localRevision(kind: SyncKind, local: Todo | { raw: string } | Blob): number {
+  private localRevision(kind: SyncKind, local: LocalSyncValue): number {
     if (kind === "todo") return (local as Todo).revision;
+    if (kind === "classification" || kind === "index") return (local as RawLocal).revision;
     return 1;
   }
 
-  private async hashLocal(kind: SyncKind, local: Todo | { raw: string } | Blob): Promise<string> {
+  private async hashLocal(kind: SyncKind, local: LocalSyncValue): Promise<string> {
     if (kind === "todo") {
       return sha256Hex(serializeTodo(local as Todo, this.deps.deviceId()));
     }
     if (kind === "image") {
       return sha256Hex(await (local as Blob).arrayBuffer());
     }
-    return "";
+    return sha256Hex((local as RawLocal).raw);
   }
 
   private async writeLocal(
