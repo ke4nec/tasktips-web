@@ -15,10 +15,10 @@ export default defineConfig({
     launchOptions: process.env.CI ? { args: ["--disable-dev-shm-usage"] } : undefined,
   },
   webServer: {
-    command: "npm run dev",
+    command: "npm run dev -- --host 127.0.0.1",
     url: "http://127.0.0.1:5174/app/",
     reuseExistingServer: !process.env.CI,
-    timeout: 60 * 1000,
+    timeout: 120 * 1000,
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });
