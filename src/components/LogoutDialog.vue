@@ -20,7 +20,7 @@ const choice = ref<LogoutChoice>("sync");
 watch(
   () => props.open,
   (value) => {
-    if (value) choice.value = props.pendingCount > 0 ? "sync" : "discard";
+    if (value) choice.value = "sync";
   },
 );
 </script>
@@ -38,8 +38,8 @@ watch(
       此浏览器还有 {{ props.pendingCount }} 项未同步修改。退出前请选择处理方式；
       清理后不会影响已同步的云端内容。
     </p>
-    <p v-else>将清理本机内存会话并返回登录页，不影响已同步的云端内容。</p>
-    <div v-if="props.pendingCount > 0" class="field">
+    <p v-else>退出将清理此账号所有项目的本机内容，请选择同步或导出后退出。</p>
+    <div class="field">
       <label for="logout-choice">未同步内容</label>
       <select id="logout-choice" v-model="choice">
         <option value="sync">同步后退出</option>

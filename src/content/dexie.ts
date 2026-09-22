@@ -96,23 +96,13 @@ export class DexieContent implements ContentPort {
   constructor(
     private readonly getUser: () => string,
     dbName = "tasktips-web",
+    private readonly isActive: () => boolean = () => true,
+    sharedDb?: Dexie,
   ) {
-    const db = new Dexie(dbName);
-    // v1：任务/分类/标签/墓碑批次/排序/图片/恢复副本/元信息。
-    db.version(1).stores({
-      meta: "scope",
-      todos: "key, scope, updatedAt",
-      categories: "key, scope",
-      tags: "key, scope",
-      batches: "key, scope",
-      customOrders: "scope",
-      images: "key, scope",
-      recoveries: "id, scope, createdAt",
-    });
-    // v2：同步状态（generation/cursor/基线/待提交/冲突/日志，§9.1），
-    // 元信息补修订计数与待确认墓碑。显式迁移，失败保留旧数据（§7.2）。
-    db.version(2)
-      .stores({
+    const db = sharedDb ?? new Dexie(dbName);
+    if (!sharedDb) {
+      // v1：任务/分类/标签/墓碑批次/排序/图片/恢复副本/元信息。
+      db.version(1).stores({
         meta: "scope",
         todos: "key, scope, updatedAt",
         categories: "key, scope",
@@ -121,17 +111,31 @@ export class DexieContent implements ContentPort {
         customOrders: "scope",
         images: "key, scope",
         recoveries: "id, scope, createdAt",
-      })
-      .upgrade((tx) =>
-        tx
-          .table("meta")
-          .toCollection()
-          .modify((row: MetaRow) => {
-            row.classificationRev ??= 1;
-            row.indexRev ??= 1;
-            row.pendingTombstones ??= [];
-          }),
-      );
+      });
+      // v2：同步状态（generation/cursor/基线/待提交/冲突/日志，§9.1），
+      // 元信息补修订计数与待确认墓碑。显式迁移，失败保留旧数据（§7.2）。
+      db.version(2)
+        .stores({
+          meta: "scope",
+          todos: "key, scope, updatedAt",
+          categories: "key, scope",
+          tags: "key, scope",
+          batches: "key, scope",
+          customOrders: "scope",
+          images: "key, scope",
+          recoveries: "id, scope, createdAt",
+        })
+        .upgrade((tx) =>
+          tx
+            .table("meta")
+            .toCollection()
+            .modify((row: MetaRow) => {
+              row.classificationRev ??= 1;
+              row.indexRev ??= 1;
+              row.pendingTombstones ??= [];
+            }),
+        );
+    }
     this.db = db;
     this.meta = db.table("meta");
     this.todos = db.table("todos");
@@ -145,6 +149,19 @@ export class DexieContent implements ContentPort {
 
   private scopeOf(projectId: string): string {
     return `${this.getUser()}\n${projectId}`;
+  }
+
+  forUser(userId: string, isActive: () => boolean = () => true): DexieContent {
+    return new DexieContent(() => userId, this.db.name, isActive, this.db);
+  }
+
+  async listLocalProjects(): Promise<string[]> {
+    const prefix = `${this.getUser()}\n`;
+    return this.tx(async () =>
+      (await this.meta.toArray())
+        .filter((row) => row.scope.startsWith(prefix))
+        .map((row) => row.scope.slice(prefix.length)),
+    );
   }
 
   private keyOf(scope: string, id: string): string {
@@ -165,6 +182,7 @@ export class DexieContent implements ContentPort {
     const meta = await this.meta.get(scope);
     const seq = (meta?.seq ?? 0) + 1;
     await this.meta.put({
+      ...meta,
       scope,
       seededAt: meta?.seededAt ?? this.now(),
       seq,
@@ -172,7 +190,7 @@ export class DexieContent implements ContentPort {
       indexRev: meta?.indexRev ?? 1,
       pendingTombstones: meta?.pendingTombstones ?? [],
     });
-    return `${prefix}-${seq}`;
+    return `${prefix}-${crypto.randomUUID()}`;
   }
 
   private freshMeta(scope: string, seq: number): MetaRow {
@@ -220,8 +238,12 @@ export class DexieContent implements ContentPort {
       .where("scope")
       .equals(scope)
       .filter((todo) => !!todo.deletedAt && isTrashExpired(todo.deletedAt as string))
-      .primaryKeys();
-    if (expiredTodos.length > 0) await this.todos.bulkDelete(expiredTodos);
+      .toArray();
+    for (const todo of expiredTodos) await this.recordTombstone(scope, todo.id);
+    if (expiredTodos.length > 0) {
+      await this.todos.bulkDelete(expiredTodos.map((todo) => todo.key));
+      await this.touch(scope, "indexRev");
+    }
     const expiredCategories = await this.categories
       .where("scope")
       .equals(scope)
@@ -262,7 +284,14 @@ export class DexieContent implements ContentPort {
     // 串行化全部事务：并发读写事务在真实 IndexedDB 下可互锁，
     // 且与 Dexie 的隐式事务复用规则叠加后难以预测，应用层排队最稳妥。
     const run = this.queue.then(() =>
-      this.ready().then(() => this.db.transaction("rw", this.allTables(), fn)),
+      this.ready().then(() =>
+        this.db.transaction("rw", this.allTables(), async () => {
+          if (!this.isActive()) throw new Error("内容上下文已失效。");
+          const result = await fn();
+          if (!this.isActive()) throw new Error("内容上下文已失效。");
+          return result;
+        }),
+      ),
     );
     this.queue = run.then(
       () => undefined,
@@ -911,6 +940,9 @@ export class DexieContent implements ContentPort {
       const removedTodoIds = new Set(
         (await this.scopedTodos(scope)).filter((todo) => todo.deletedAt).map((todo) => todo.id),
       );
+      for (const id of removedTodoIds) await this.recordTombstone(scope, id);
+      await this.touch(scope, "indexRev");
+      await this.touch(scope, "classificationRev");
       await this.todos
         .where("scope")
         .equals(scope)

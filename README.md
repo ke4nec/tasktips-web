@@ -3,8 +3,8 @@
 普通用户浏览器客户端：受邀注册、登录即用、离线记录、多端接续。产品与前端设计见
 `docs/tasktips-web-design.md`，HTML 交互稿见 `design/`（`design/README.md`）。
 
-> 当前状态：全部阶段交付（P0–P8）。Web 会话接口与云端 sync/history/snapshot
-> 仍走 Mock（云端落地后替换为 HTTP），其余功能完整可用。
+> 开发与常规 E2E 默认使用 Mock；生产构建默认连接同源 HTTP API。
+> 离线重开使用已验证账号的本地副本，联网认证状态单独维护。
 > 验收矩阵与已知限制见本文末尾。
 
 ## 技术框架
@@ -67,6 +67,7 @@ npm run lint      # Prettier 检查 + ESLint
 npm run format    # 自动格式化
 npm run test      # Vitest 单测
 npm run test:e2e  # Playwright 端到端（自动拉起 dev 服务器，需先 npx playwright install chromium）
+npm run test:production  # 生产构建 + CSP/首次离线启动/SW 更新测试（5175 端口）
 npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 ```
 
@@ -74,8 +75,9 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 
 - `vite.config.ts` 将 `/api` 代理到 `http://127.0.0.1:18080`（本地云端 API），生产由同源反代承载。
 - 应用部署在 `/app/`，根路径 `/` 重定向 `/app/`（设计文档 §3.1、§11.2）。
-- 后端模式：默认 `MockApi`（内存 + localStorage 刷新仿真）；
-  联调时 `VITE_API_MODE=http npm run dev` 切换真实 fetch。
+- 后端模式：开发默认 `MockApi`（内存 + localStorage 刷新仿真）；
+  联调时 `VITE_API_MODE=http npm run dev` 切换真实 fetch。生产默认 HTTP；
+  `VITE_API_MODE=mock npm run build` 可生成明确使用 Mock 的演示构建。
   Mock 预置账号 `demo@example.com / Demo12345678`、邀请 `demo-invitation-token`，仅 dev/E2E。
 - access token 仅存内存；设备 ID 按浏览器安装及账号隔离（`tasktips:device-id:<email>`）。
 - `generate:api` 默认读取 `../tasktips-cloud/contracts/openapi.yaml`，
@@ -87,6 +89,11 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 
 - 单元/组件：`src/**/*.test.ts`，`npm run test`。
 - 端到端：`tests/e2e/*.spec.ts`，`npm run test:e2e`。
+- 生产资源：`tests/production/*.spec.ts`，`npm run test:production`。使用真实 Chromium、
+  生产默认 HTTP 模式和部署 CSP，HTTP 服务为本地契约夹具；无需真实云端账号。
+- 审查回归：账号切换、脏数据计数、跨设备 ID、刷新重试、图片 ID、不可变请求、
+  YAML 无损读写、跨标签页基线、永久删除传播见 `src/sync/regressions.test.ts`；
+  导航保存和项目上下文见 `tests/e2e/regressions.spec.ts`。
 - 当前验收：完整路由表与守卫、主题持久化与跟随系统、移动端抽屉、命令面板导航、
   弹层焦点归还（设计稿动效对齐：弹层/Toast/抽屉/主题过渡/骨架呼吸）。
 - P2 验收：登录/错误密码、邀请预填与激活、无效邀请拒绝、密码规则、新建/重命名项目、
@@ -115,11 +122,14 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 
 - 应用部署在 `/app/`，根路径 `/` 重定向 `/app/`；history fallback 仅限 `/app/` 内。
 - 生产要求 HTTPS；`TASKTIPS_WEB_ORIGIN` 与浏览器实际 origin 一致。
-- Service Worker 注册在 `/app/`，只缓存版本化应用外壳（发版递增 `public/sw.js`
-  的 `CACHE_VERSION`），不缓存认证响应、API 响应与带凭据下载。
-- CSP 经反代下发（`script-src 'self'` + 内联主题引导哈希，见示例文件注释）；
+- Service Worker 注册在 `/app/`，构建时由 `scripts/build-sw.ts` 自动生成内容版本和
+  完整 HTML/JS/CSS/静态资源预缓存清单。安装失败不会激活不完整版本；不缓存 API。
+- 浏览器仅保存本地账号标识和按账号隔离的项目列表作为离线入口，不持久化令牌。
+  明确的认证撤销和退出会移除离线入口；临时断网允许继续使用已下载内容。
+- 退出时同步或导出该账号全部本地项目；批量导出为一个 ZIP，内部每个项目一个可恢复 ZIP。
+- CSP 经反代下发（`script-src 'self'`，主题引导使用同源 `theme-boot.js`）；
   Milkdown/CodeMirror 运行时样式需要 `style-src 'unsafe-inline'`（已在示例中权衡注明）。
-- 新版本下载后提示用户刷新（先完成本地保存），不在输入中自动 reload。
+- 新版本下载后提示更新；点击后等待编辑保存成功、激活等待中的 SW，再刷新。保存失败会显示错误并保留页面。
 
 ## 验收矩阵（设计文档 §12.1 落点）
 
@@ -130,7 +140,7 @@ npm run generate:api  # 从兄弟后端契约生成 src/api/schema.d.ts
 - 同步全链路（bootstrap/增量/冲突双向/墓碑/幂等/拒绝/代次/退避/维护）：引擎单测 12 项。
 - 历史/快照/恢复/ZIP/改密/设备/存储：`settings.spec.ts` + 单测。
 - 性能：千条查询 P95 <100ms（`queryPerf.test.ts`，node 实测）；平直大列表虚拟化。
-- 多标签页任务锁：单测 + 探测跳过（headless-shell 不实现跨页互斥，真机手动验证）。
+- 多标签页任务锁：单测 + Chromium 真实锁互斥用例，支持的测试浏览器必须执行、不跳过。
 
 ## 已知阻塞依赖与限制
 

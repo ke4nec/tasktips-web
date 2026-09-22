@@ -2,6 +2,8 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 
 import { api } from "@/api";
+import { ApiError } from "@/api/types";
+import { useSessionStore } from "@/stores/session";
 import type { Project } from "@/api/types";
 import { LAST_PROJECT_KEY } from "@/stores/session";
 
@@ -28,27 +30,50 @@ export const useProjectStore = defineStore("project", () => {
     }
   }
 
+  function cacheKey() {
+    return `tasktips:projects:${useSessionStore().account?.email ?? "local"}`;
+  }
+
   async function load() {
-    projects.value = await api.listProjects();
+    const key = cacheKey();
+    try {
+      if (!useSessionStore().isAuthenticated && useSessionStore().canAccessWorkspace) {
+        throw new ApiError("NETWORK_ERROR", "离线工作区");
+      }
+      const loaded = await api.listProjects();
+      if (key !== cacheKey()) return;
+      projects.value = loaded;
+      try {
+        localStorage.setItem(key, JSON.stringify(loaded));
+      } catch {
+        /* optional cache */
+      }
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "NETWORK_ERROR") throw error;
+      const cached = JSON.parse(localStorage.getItem(key) ?? "[]") as Project[];
+      projects.value = Array.isArray(cached)
+        ? cached.filter((item) => typeof item.id === "string" && typeof item.name === "string")
+        : [];
+    }
   }
 
   async function ensureDefaultProject() {
     if (projects.value.length === 0) {
       await api.createProject("我的任务");
-      projects.value = await api.listProjects();
+      await load();
     }
   }
 
   async function create(name: string): Promise<Project> {
     const project = await api.createProject(name);
-    projects.value = await api.listProjects();
+    await load();
     rememberProject(project.id);
     return project;
   }
 
   async function rename(id: string, name: string): Promise<Project> {
     const project = await api.renameProject(id, name);
-    projects.value = await api.listProjects();
+    await load();
     return project;
   }
 

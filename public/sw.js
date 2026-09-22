@@ -1,76 +1,54 @@
-/* TaskTips Web Service Worker（设计文档 §11.2）。
- *
- * - 注册作用域 /app/，只处理该路径下的 GET 请求，不碰 /api/ 与管理后台。
- * - 版本化应用外壳缓存：发版时递增 CACHE_VERSION；旧版本在激活后清理。
- * - 不缓存认证响应、API 响应与带凭据下载；API 直接联网，由应用层决定本地/远端。
- * - 不自动 reload：新版本下载后通知页面，由用户在保存完成后手动刷新。
- */
-const CACHE_VERSION = "tasktips-web-v1";
+// 构建时填入内容版本与完整资源清单；安装不完整时保留上一版本。
+const CACHE_VERSION = "__CACHE_VERSION__";
+const SHELL = ["__PRECACHE_MANIFEST__"];
 const APP_BASE = "/app/";
-const SHELL = [
-  `${APP_BASE}`,
-  `${APP_BASE}index.html`,
-  `${APP_BASE}manifest.webmanifest`,
-  `${APP_BASE}favicon.svg`,
-];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE_VERSION)
-      .then((cache) => cache.addAll(SHELL))
-      .catch(() => undefined),
-  );
+  event.waitUntil(caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL)));
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((key) => key !== CACHE_VERSION).map((key) => caches.delete(key))),
-      ),
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((key) => key.startsWith("tasktips-web-") && key !== CACHE_VERSION)
+          .map((key) => caches.delete(key)),
+      );
+      await self.clients.claim();
+    })(),
   );
 });
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;
-  if (request.method !== "GET") return;
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
-  if (!url.pathname.startsWith(APP_BASE)) return;
-  // 导航请求：网络优先，离线回退应用壳。
+  if (
+    request.method !== "GET" ||
+    url.origin !== self.location.origin ||
+    !url.pathname.startsWith(APP_BASE)
+  )
+    return;
+  // HTML 与资源属于同一版本，避免新 HTML 引用尚未缓存的资源。
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put(`${APP_BASE}index.html`, copy));
-          return response;
-        })
-        .catch(() => caches.match(`${APP_BASE}index.html`)),
+      caches
+        .open(CACHE_VERSION)
+        .then(async (cache) => (await cache.match(`${APP_BASE}index.html`)) || fetch(request)),
     );
-    return;
+  } else if (SHELL.includes(url.pathname)) {
+    event.respondWith(
+      caches
+        .open(CACHE_VERSION)
+        .then(
+          async (cache) => (await cache.match(request, { ignoreSearch: true })) || fetch(request),
+        ),
+    );
   }
-  // 版本化静态资源：缓存优先命中，后台更新。
-  event.respondWith(
-    caches.match(request).then((hit) => {
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => hit);
-      return hit || network;
-    }),
-  );
 });
 
 self.addEventListener("message", (event) => {
-  if (event.data === "get-version" && event.ports[0]) {
-    event.ports[0].postMessage(CACHE_VERSION);
-  }
+  if (event.data === "activate-update") event.waitUntil(self.skipWaiting());
+  if (event.data === "get-version" && event.ports[0]) event.ports[0].postMessage(CACHE_VERSION);
 });

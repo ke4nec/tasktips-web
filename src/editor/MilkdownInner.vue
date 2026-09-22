@@ -110,7 +110,13 @@ useEditor((container) =>
         ...previous,
         uploader: (files, schema) => uploadImages(files, schema),
       }));
+      ctx.get(listenerCtx).mounted(() => {
+        lastObservedDoc = ctx.get(editorViewCtx).state.doc;
+      });
       ctx.get(listenerCtx).markdownUpdated((_, markdown, prev) => {
+        // 路由切换后的程序化替换不能接收上一文档尚未发出的通知。
+        if (markdown !== readMarkdown()) return;
+        lastObservedDoc = ctx.get(editorViewCtx).state.doc;
         if (markdown === lastApplied) return;
         if (markdown !== prev) emit("change", markdown);
       });
@@ -154,6 +160,19 @@ function readMarkdown(): string {
 }
 
 let lastApplied: string | null = null;
+let lastObservedDoc: ProseNode | null = null;
+
+// Milkdown 的 change 通知有 200ms 防抖；导航/更新必须读取当前事务。
+// 比较文档节点，避免仅打开文档就把原始 Markdown 规范化并标脏。
+function flushChanges() {
+  const editor = getInstance();
+  if (!editor || props.readonly) return;
+  const doc = editor.action((ctx) => ctx.get(editorViewCtx).state.doc);
+  if (lastObservedDoc?.eq(doc)) return;
+  lastObservedDoc = doc;
+  const markdown = readMarkdown();
+  if (markdown !== lastApplied) emit("change", markdown);
+}
 
 /** 外部写入（撤销回放/预览刷新）：记录写后回读，抑制序列化回声。
  * 回声若参与记录会污染撤销栈并清空重做栈（§5.2 程序化回放不入栈）。 */
@@ -163,6 +182,7 @@ function setText(markdown: string) {
   if (readMarkdown() === markdown) return;
   editor.action(replaceAll(markdown));
   lastApplied = readMarkdown();
+  lastObservedDoc = editor.action((ctx) => ctx.get(editorViewCtx).state.doc);
 }
 
 function runCommand(command: MilkdownCommand) {
@@ -317,6 +337,7 @@ onBeforeUnmount(() => {
 });
 
 defineExpose({
+  flushChanges,
   setText,
   runCommand,
   insertMarkdown,

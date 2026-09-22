@@ -93,7 +93,7 @@ export const router = createRouter({
 router.beforeEach(async (to) => {
   const session = useSessionStore();
   await session.ready();
-  if (!to.meta.public && !session.isAuthenticated) {
+  if (!to.meta.public && !session.canAccessWorkspace) {
     return { name: "login", query: { redirect: to.fullPath } };
   }
   if ((to.name === "login" || to.name === "register") && session.isAuthenticated) {

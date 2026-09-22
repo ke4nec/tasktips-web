@@ -1,3 +1,5 @@
+import { parseDocument, stringify } from "yaml";
+import { deriveTitle } from "@/domain/title";
 import type { Category, Tag, Todo } from "@/domain/types";
 import { SyncError } from "./protocol";
 
@@ -23,69 +25,8 @@ export async function sha256Hex(data: string | ArrayBuffer): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function yamlScalar(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  const text = String(value);
-  // 需引用的情况：含特殊字符、前后空格或与 YAML 关键字冲突时用双引号 JSON 风格。
-  if (
-    /[:#\[\]{},&*!|>'"%@` \t\n]/.test(text) ||
-    text === "" ||
-    /^(true|false|null|~|[0-9])/i.test(text)
-  ) {
-    return JSON.stringify(text);
-  }
-  return text;
-}
-
-function parseScalar(text: string): unknown {
-  const trimmed = text.trim();
-  if (trimmed === "null" || trimmed === "~") return null;
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (/^-?\d+$/.test(trimmed)) return Number(trimmed);
-  if (/^-?\d+\.\d+$/.test(trimmed)) return Number(trimmed);
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      return trimmed;
-    }
-  }
-  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
-    return trimmed.slice(1, -1).replace(/''/g, "'");
-  }
-  return trimmed;
-}
-
-// 受限 YAML 子集：顶层 key: value 与 tags 列表（- item），满足 Todo front matter 往返。
-function parseFrontMatter(lines: string[]): { fields: Record<string, unknown>; consumed: number } {
-  const fields: Record<string, unknown> = {};
-  let index = 0;
-  let currentList: string | null = null;
-  for (; index < lines.length; index++) {
-    const line = lines[index];
-    if (!line.trim() || line.trim().startsWith("#")) continue;
-    const listMatch = line.match(/^(\s*)-\s(.*)$/);
-    if (listMatch && currentList) {
-      (fields[currentList] as unknown[]).push(parseScalar(listMatch[2]));
-      continue;
-    }
-    const kvMatch = line.match(/^([A-Za-z0-9_-]+):\s?(.*)$/);
-    if (!kvMatch) break;
-    const [, key, rest] = kvMatch;
-    if (rest === "") {
-      fields[key] = [];
-      currentList = key;
-    } else {
-      fields[key] = parseScalar(rest);
-      currentList = null;
-    }
-  }
-  return { fields, consumed: index };
-}
-
 export interface ParsedTodoDoc {
+  raw: string;
   fields: Record<string, unknown>;
   extra: Record<string, unknown>;
   body: string;
@@ -95,7 +36,7 @@ export function parseTodoDoc(payload: string): ParsedTodoDoc {
   const normalized = payload.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
   if (lines[0] !== "---") {
-    return { fields: {}, extra: {}, body: normalized };
+    return { raw: payload, fields: {}, extra: {}, body: normalized };
   }
   let end = -1;
   for (let i = 1; i < lines.length; i++) {
@@ -105,7 +46,30 @@ export function parseTodoDoc(payload: string): ParsedTodoDoc {
     }
   }
   if (end === -1) throw new SyncError("SCHEMA_UNSUPPORTED", "Todo 缺少 front matter 结束标记。");
-  const { fields } = parseFrontMatter(lines.slice(1, end));
+  const document = parseDocument(lines.slice(1, end).join("\n"), { uniqueKeys: true });
+  if (document.errors.length)
+    throw new SyncError("SCHEMA_UNSUPPORTED", "Todo front matter 不是合法 YAML。");
+  let fields: Record<string, unknown>;
+  try {
+    fields = document.toJS({ maxAliasCount: 100 }) as Record<string, unknown>;
+  } catch {
+    throw new SyncError("SCHEMA_UNSUPPORTED", "Todo front matter 结构不支持。");
+  }
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+    throw new SyncError("SCHEMA_UNSUPPORTED", "Todo front matter 必须是字段映射。");
+  }
+  if (
+    (fields.schemaVersion !== undefined && fields.schemaVersion !== 1) ||
+    (fields.status !== undefined && fields.status !== "open" && fields.status !== "completed") ||
+    (fields.priority !== undefined && ![0, 1, 2, 3].includes(fields.priority as number)) ||
+    (fields.tags != null &&
+      (!Array.isArray(fields.tags) ||
+        fields.tags.some((tag: unknown) => typeof tag !== "string"))) ||
+    (fields.revision !== undefined &&
+      (!Number.isSafeInteger(fields.revision) || Number(fields.revision) < 0))
+  ) {
+    throw new SyncError("SCHEMA_UNSUPPORTED", "Todo front matter 字段不受支持。");
+  }
   // 序列化恒追加一个换行，解析时剥离一个以互逆（§7.1 真实修改才规范化）。
   const body = lines
     .slice(end + 1)
@@ -132,10 +96,32 @@ export function parseTodoDoc(payload: string): ParsedTodoDoc {
   for (const [key, value] of Object.entries(fields)) {
     if (!known.has(key)) extra[key] = value;
   }
-  return { fields, extra, body };
+  return { raw: payload, fields, extra, body };
+}
+
+function yamlScalar(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  const text = String(value);
+  // 需引用的情况：含特殊字符、前后空格或与 YAML 关键字冲突时用双引号 JSON 风格。
+  if (
+    /[:#\[\]{},&*!|>'"%@` \t\n]/.test(text) ||
+    text === "" ||
+    /^(true|false|null|~|[0-9])/i.test(text)
+  ) {
+    return JSON.stringify(text);
+  }
+  return text;
+}
+
+function todoFingerprint(todo: Todo): string {
+  const { source: _source, seeded: _seeded, ...fields } = todo;
+  return canonicalJson(fields);
 }
 
 export function serializeTodo(todo: Todo, deviceId: string): string {
+  // 未编辑的远端文档保留原始字节、注释、字段顺序和换行。
+  if (todo.source && todo.source.fingerprint === todoFingerprint(todo)) return todo.source.raw;
   const tags = todo.tags.map((tag) => `  - ${yamlScalar(tag)}`).join("\n");
   const lines = [
     "---",
@@ -159,7 +145,12 @@ export function serializeTodo(todo: Todo, deviceId: string): string {
   for (const [key, value] of Object.entries(
     (todo as unknown as { extra?: Record<string, unknown> }).extra ?? {},
   )) {
-    lines.push(`${key}: ${yamlScalar(value)}`);
+    // 复杂字段使用完整 YAML；旧版标量保持字节兼容，避免升级时误判为脏数据。
+    if (/^[A-Za-z0-9_-]+$/.test(key) && (value === null || typeof value !== "object")) {
+      lines.push(`${key}: ${yamlScalar(value)}`);
+    } else {
+      lines.push(stringify({ [key]: value }).trimEnd());
+    }
   }
   lines.push("---", todo.body);
   const payload = `${lines.join("\n")}\n`;
@@ -175,12 +166,15 @@ export function todoFromDoc(
   fallbackRevision: number,
 ): Todo & { extra?: Record<string, unknown> } {
   const fields = doc.fields;
+  if (fields.id !== undefined && fields.id !== id) {
+    throw new SyncError("SCHEMA_UNSUPPORTED", "Todo ID 与同步对象不一致。");
+  }
   const status = fields.status === "completed" ? "completed" : "open";
   const priority = [0, 1, 2, 3].includes(Number(fields.priority)) ? Number(fields.priority) : 0;
   const tags = Array.isArray(fields.tags) ? fields.tags.map(String) : [];
   const todo: Todo & { extra?: Record<string, unknown> } = {
     id: String(fields.id ?? id),
-    title: "",
+    title: deriveTitle(doc.body) || "未命名 Todo",
     body: doc.body,
     status,
     priority: priority as Todo["priority"],
@@ -200,6 +194,7 @@ export function todoFromDoc(
     todo.deviceId = String(fields.deviceId);
   }
   if (Object.keys(doc.extra).length > 0) todo.extra = doc.extra;
+  todo.source = { raw: doc.raw, fingerprint: todoFingerprint(todo) };
   return todo;
 }
 

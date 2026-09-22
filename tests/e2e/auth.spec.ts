@@ -66,8 +66,8 @@ test("退出登录回到登录页", async ({ page }) => {
   await page.goto("/app/projects");
   await page.getByRole("button", { name: "退出登录" }).click();
   await page.getByRole("button", { name: "确认退出" }).click();
-  await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "登录", exact: true })).toBeVisible();
   // 会话已清：再进业务页回到登录
   await page.goto("/app/projects");
-  await expect(page.getByRole("heading", { name: "登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "登录", exact: true })).toBeVisible();
 });

@@ -13,25 +13,8 @@
       content="TaskTips Web：受邀注册、登录即用、离线记录、多端接续的任务工作台"
     />
     <title>TaskTips Web</title>
-    <!-- 首帧主题底色：内联以避免 base 路径改写问题；P8 CSP 需为其放行 sha256 哈希。
-         与 public/theme-boot.js 同源（桌面端移植），偏好键 tasktips:theme-preference。 -->
-    <script>
-      (function () {
-        var theme = "light";
-        try {
-          var cached = localStorage.getItem("tasktips:theme-preference");
-          if (cached === "light" || cached === "dark") {
-            theme = cached;
-          } else if (
-            cached !== "light" &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches
-          ) {
-            theme = "dark";
-          }
-        } catch (e) {}
-        document.documentElement.dataset.theme = theme;
-      })();
-    </script>
+    <!-- 同源阻塞脚本在首帧应用主题，CSP 仅需 script-src self。 -->
+    <script src="/app/theme-boot.js" vite-ignore></script>
   </head>
   <body>
     <div id="app"></div>

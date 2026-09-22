@@ -92,7 +92,10 @@ test("元数据与完成切换", async ({ page }) => {
   await expect(page.getByRole("button", { name: /重新打开/ })).toBeVisible();
 });
 
-test("外部链接新窗口打开且隔离", async ({ page }) => {
+test("外部链接新窗口打开且隔离", async ({ page, context }) => {
+  await context.route("https://example.com/**", (route) =>
+    route.fulfill({ body: "example", contentType: "text/html" }),
+  );
   await openEditor(page);
   await page.getByRole("button", { name: "分栏", exact: true }).click();
   const source = page.locator(".source-editor-host .cm-content");
@@ -107,7 +110,7 @@ test("外部链接新窗口打开且隔离", async ({ page }) => {
   const popupPromise = page.waitForEvent("popup");
   await link.click();
   const popup = await popupPromise;
-  expect(popup.url()).toBe("https://example.com/");
+  await expect(popup).toHaveURL("https://example.com/");
   expect(await popup.evaluate(() => window.opener)).toBeNull();
   await popup.close();
 });
@@ -128,7 +131,7 @@ test("多标签页编辑同任务只读", async ({ browser }) => {
   const context = await browser.newContext();
   const first = await context.newPage();
   await login(first);
-  // headless-shell 不实现跨页锁互斥：先探测，不支持则跳过（单测覆盖锁逻辑）。
+  // 校验实际互斥行为；当前支持的 Chromium 必须执行本用例。
   await first.goto("/app/p/demo/inbox");
   const contended = await first.evaluate(async () => {
     let release!: () => void;
@@ -140,13 +143,13 @@ test("多标签页编辑同任务只读", async ({ browser }) => {
     const second = await (navigator as unknown as { locks: LockManager }).locks.request(
       "probe-lock",
       { ifAvailable: true },
-      () => true,
+      (lock) => lock !== null,
     );
     release();
     await holding.catch(() => undefined);
     return second === false;
   });
-  test.skip(!contended, "当前浏览器不支持 Web Locks 互斥");
+  expect(contended).toBe(true);
   await first.locator(".task-row .task-main").first().click();
   await expect(first.locator(".editor-content .ProseMirror").first()).toBeVisible();
   const url = first.url();

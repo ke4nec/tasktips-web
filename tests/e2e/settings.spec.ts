@@ -26,7 +26,9 @@ test("改密后需重新登录", async ({ page }) => {
   await page.getByLabel("新密码（至少 12 字符）").fill("NewPassword1234");
   await page.getByLabel("确认新密码").fill("NewPassword1234");
   await page.getByRole("button", { name: "确认更新" }).click();
-  await expect(page.getByRole("heading", { name: "登录" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("heading", { name: "登录", exact: true })).toBeVisible({
+    timeout: 10000,
+  });
   // 新密码可登录（同页 Mock 会话）
   await page.getByLabel("邮箱").fill("demo@example.com");
   await page.getByLabel("密码", { exact: true }).fill("NewPassword1234");

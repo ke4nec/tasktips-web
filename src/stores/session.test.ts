@@ -3,7 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEMO_EMAIL, MockApi } from "@/api/mock";
 import { ApiError } from "@/api/types";
-import { DEVICE_ID_PREFIX, PENDING_LOGOUT_KEY, useSessionStore } from "@/stores/session";
+import {
+  DEVICE_ID_PREFIX,
+  LOCAL_SESSION_KEY,
+  PENDING_LOGOUT_KEY,
+  useSessionStore,
+} from "@/stores/session";
+import { useProjectStore } from "@/stores/project";
 import { useUiStore } from "@/stores/ui";
 
 describe("浏览器会话（MockApi）", () => {
@@ -65,6 +71,34 @@ describe("浏览器会话（MockApi）", () => {
     expect(session.isAuthenticated).toBe(false);
     expect(session.accessToken).toBeNull();
     expect(localStorage.getItem("tasktips:last-project")).toBeNull();
+  });
+
+  it("离线重开恢复本地账号与项目，但不伪造在线令牌", async () => {
+    await useSessionStore().mockLoginQuick();
+    const original = useProjectStore().projects;
+    setActivePinia(createPinia());
+    const refresh = vi
+      .spyOn(MockApi.prototype, "refresh")
+      .mockRejectedValue(new ApiError("NETWORK_ERROR", "offline"));
+    const session = useSessionStore();
+    expect(await session.restoreSession()).toBe(true);
+    expect(session.canAccessWorkspace).toBe(true);
+    expect(session.isAuthenticated).toBe(false);
+    expect(session.accessToken).toBeNull();
+    expect(useProjectStore().projects).toEqual(original);
+    expect(JSON.parse(localStorage.getItem(LOCAL_SESSION_KEY)!)).toEqual({ email: DEMO_EMAIL });
+    refresh.mockRestore();
+  });
+
+  it("明确撤销认证后不允许从缓存重新进入", async () => {
+    await useSessionStore().mockLoginQuick();
+    const refresh = vi
+      .spyOn(MockApi.prototype, "refresh")
+      .mockRejectedValue(new ApiError("DEVICE_REVOKED", "revoked"));
+    expect(await useSessionStore().refreshAccess()).toBe(false);
+    expect(useSessionStore().canAccessWorkspace).toBe(false);
+    expect(localStorage.getItem(LOCAL_SESSION_KEY)).toBeNull();
+    refresh.mockRestore();
   });
 });
 

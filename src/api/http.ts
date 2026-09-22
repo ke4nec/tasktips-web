@@ -111,13 +111,9 @@ export class HttpApi implements ApiPort {
   }
 
   private async meWith(token: string): Promise<Account> {
-    const response = await fetch("/api/v1/me", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok)
-      throw new ApiError("AUTHENTICATION_REQUIRED", "登录已失效，请重新登录。", 401);
-    const data = (await response.json()) as { email: string };
-    return { email: data.email };
+    // 与刷新请求使用同样的网络错误分类；刷新成功后断网仍可打开本地副本。
+    const client = new HttpApi(this.baseUrl, () => token);
+    return client.me();
   }
 
   async registerDevice(input: RegisterDeviceInput): Promise<Device> {

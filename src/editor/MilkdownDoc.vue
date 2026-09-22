@@ -24,6 +24,7 @@ const emit = defineEmits<{
 const inner = useTemplateRef("inner");
 
 defineExpose({
+  flushChanges: () => inner.value?.flushChanges(),
   setText: (markdown: string) => inner.value?.setText(markdown),
   runCommand: (command: MilkdownCommand) => inner.value?.runCommand(command),
   insertMarkdown: (snippet: string) => inner.value?.insertMarkdown(snippet),

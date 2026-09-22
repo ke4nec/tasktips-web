@@ -26,6 +26,7 @@ const nameInput = ref("");
 const renameId = ref("");
 const dialogError = ref("");
 const logoutOpen = ref(false);
+const logoutCount = ref(0);
 
 async function reload() {
   loading.value = true;
@@ -83,8 +84,11 @@ async function enter(projectId: string) {
 }
 
 async function openLogout() {
-  const entry = projects.entryProject();
-  if (entry) await sync.refresh(entry.id).catch(() => undefined);
+  try {
+    logoutCount.value = await sync.logoutPendingCount();
+  } catch {
+    logoutCount.value = 1;
+  }
   logoutOpen.value = true;
 }
 
@@ -179,7 +183,7 @@ async function onLogoutConfirm(choice: LogoutChoice) {
 
     <LogoutDialog
       :open="logoutOpen"
-      :pending-count="sync.pendingCount"
+      :pending-count="logoutCount"
       @update:open="logoutOpen = $event"
       @confirm="onLogoutConfirm"
     />

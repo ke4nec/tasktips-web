@@ -1,5 +1,4 @@
 import type { ContentPort } from "@/content/port";
-import { deriveTitle } from "@/domain/title";
 import type { Category, Tag, Todo } from "@/domain/types";
 import {
   parseIndex,
@@ -61,7 +60,16 @@ export class SyncEngine {
   private running: Promise<string> | null = null;
   private epoch = 0;
 
-  constructor(private readonly deps: EngineDeps) {}
+  private invalidated = false;
+  private queue: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly deps: EngineDeps) {
+    this.deps = { ...deps, content: deps.content.forUser(deps.userId, () => !this.invalidated) };
+  }
+
+  private assertActive() {
+    if (this.invalidated) throw new SyncError("SERVER_ERROR", "上下文已失效。");
+  }
 
   get scope(): string {
     return `${this.deps.userId}\n${this.deps.projectId}`;
@@ -69,6 +77,7 @@ export class SyncEngine {
 
   /** 登出/切换账号时递增，旧响应不得写入新上下文（§8.3）。 */
   invalidate() {
+    this.invalidated = true;
     this.epoch += 1;
   }
 
@@ -76,6 +85,13 @@ export class SyncEngine {
     if (!this.state) {
       const raw = await this.deps.content.getSyncState(this.deps.projectId);
       this.state = raw ? (JSON.parse(raw) as SyncStateData) : initialSyncState();
+      // 旧版把本地路径作为 image ID；该批次不符合 HTTP 协议，保留本地内容并重建。
+      if (
+        this.state.pending?.objects.some((item) => item.kind === "image" && /[/\\]/.test(item.id))
+      ) {
+        this.state.pending = null;
+        await this.saveState();
+      }
     }
     return this.state;
   }
@@ -113,55 +129,74 @@ export class SyncEngine {
   }
 
   private async withLock<T>(task: () => Promise<T>): Promise<T> {
-    // 账号项目级同步锁；无 Web Locks 能力时直接执行（工作区准入另行判断）。
-    const locks =
-      typeof navigator !== "undefined"
-        ? (navigator as Navigator & { locks?: LockManager }).locks
-        : undefined;
-    if (locks) {
-      return locks.request(`tasktips-sync:${this.scope}`, async () => task());
-    }
-    return task();
+    const execute = async () => {
+      this.assertActive();
+      // 每次取得项目锁后读取持久基线，包含其他标签页的确认结果。
+      this.state = null;
+      await this.loadState();
+      return task();
+    };
+    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+    const result = this.queue.then(async (): Promise<T> => {
+      if (locks) return await locks.request(`tasktips-sync:${this.scope}`, execute);
+      return execute();
+    });
+    this.queue = result.catch(() => undefined);
+    return result;
   }
 
   private async run(manual: boolean): Promise<string> {
     const epoch = this.epoch;
     return this.withLock(async () => {
       const state = await this.loadState();
-      if (epoch !== this.epoch) return "error";
-      if (!this.isOnline()) {
-        return "offline";
-      }
-      if (!manual && Date.now() < state.backoffUntil) {
+      if (!this.isOnline()) return "offline";
+      if (!manual && (Date.now() < state.backoffUntil || state.submitPaused || !state.autoSync)) {
         return this.describe(state);
       }
-      if (!manual && state.submitPaused) {
-        return this.describe(state);
-      }
-      if (!manual && !state.autoSync) {
-        return this.describe(state);
-      }
-      try {
-        if (!state.bootstrapped) {
-          await this.bootstrap(state, epoch);
-        } else {
-          await this.pull(state, epoch);
+      let refreshed = false;
+      let reset = false;
+      for (;;) {
+        try {
+          this.assertActive();
+          if (!state.bootstrapped) await this.bootstrap(state, epoch);
+          else await this.pull(state, epoch);
+          this.assertActive();
+          await this.pushDirty(state, epoch, manual);
+          state.lastSyncAt = new Date().toISOString();
+          state.lastError = null;
+          state.backoffUntil = 0;
+          state.backoffStep = 0;
+          state.submitPaused = false;
+          this.log("push", 0);
+          await this.saveState();
+          notifyScope(this.scope);
+          return this.describe(state);
+        } catch (error) {
+          if (this.invalidated) return "error";
+          if (
+            error instanceof SyncError &&
+            error.code === "AUTHENTICATION_REQUIRED" &&
+            !refreshed
+          ) {
+            refreshed = true;
+            if (await this.deps.refreshSession?.()) continue;
+          }
+          if (
+            error instanceof SyncError &&
+            (error.code === "GENERATION_MISMATCH" || error.code === "CURSOR_INVALID") &&
+            !manual &&
+            !reset
+          ) {
+            reset = true;
+            await this.handleFailure(state, error, manual);
+            continue;
+          }
+          return this.handleFailure(state, error, manual);
         }
-        if (epoch !== this.epoch) return "error";
-        await this.pushDirty(state, epoch, manual);
-        state.lastSyncAt = new Date().toISOString();
-        state.lastError = null;
-        state.backoffUntil = 0;
-        state.backoffStep = 0;
-        // 成功即恢复提交（维护后手动重试可解除暂停；终局认证失败不可能成功）。
-        state.submitPaused = false;
-        this.log("push", 0);
-        await this.saveState();
-        notifyScope(this.scope);
-        return this.describe(state);
-      } catch (error) {
-        return this.handleFailure(state, error, manual);
       }
+    }).catch((error: unknown) => {
+      if (this.invalidated) return "error";
+      throw error;
     });
   }
 
@@ -196,10 +231,6 @@ export class SyncEngine {
       state.pending = null;
       state.lastError = error.code;
       await this.saveState();
-      if (!manual) {
-        // 自动流程内直接重初始化一次；手动流程由调用方决定。
-        return this.run(true);
-      }
       return "error";
     }
     if (error instanceof SyncError && isTerminalSyncAuth(error.code)) {
@@ -217,9 +248,6 @@ export class SyncEngine {
       return "maintenance";
     }
     if (error instanceof SyncError && error.code === "AUTHENTICATION_REQUIRED") {
-      if (this.deps.refreshSession && (await this.deps.refreshSession())) {
-        return this.run(true);
-      }
       state.lastError = error.code;
       this.log("push", 0, error.code);
       await this.saveState();
@@ -298,13 +326,16 @@ export class SyncEngine {
       if (actual !== change.hash) {
         throw new SyncError("HASH_MISMATCH", `对象 ${change.kind}/${change.id} 哈希不一致。`);
       }
+      this.assertActive();
       payloads.set(changeKey(change), data);
     }
     // 本页任务一次读出，逐项比对不再全表扫描（大列表性能）。
     const todoMap = new Map(
       (await this.deps.content.listTodos(this.deps.projectId)).map((todo) => [todo.id, todo]),
     );
-    for (const change of changes) {
+    // 一页可能包含同一对象的多次历史变更，仅应用该页最终版本。
+    const latest = new Map(changes.map((change) => [changeKey(change), change]));
+    for (const change of latest.values()) {
       if (isTombstone(change)) {
         await this.applyTombstone(state, change, todoMap);
       } else {
@@ -324,15 +355,12 @@ export class SyncEngine {
   ): Promise<void> {
     const key = changeKey(envelope);
     const base = state.baselines[key];
+    if (base && base.revision > envelope.revision) return;
     const raw = await this.readLocal(envelope.kind, envelope.id, todoMap, state);
     // 演示种子非用户意图：无基线时视为缺席，直接采用远端（§7.2 种子仅为本地演示）。
     const local = raw !== null && "seeded" in raw && raw.seeded === true && !base ? null : raw;
     const localHash = local ? await this.hashLocal(envelope.kind, local) : null;
-    const dirty =
-      local !== null &&
-      (!base ||
-        localHash !== base.hash ||
-        (envelope.kind === "todo" && this.localRevision(envelope.kind, local) > base.revision));
+    const dirty = local !== null && (!base || localHash !== base.hash);
 
     // 回收站本地保留：远端变更不复活已删除任务，仅跟进基线（P6 边界）。
     if (envelope.kind === "todo" && local !== null && (local as Todo).deletedAt) {
@@ -381,14 +409,12 @@ export class SyncEngine {
   ): Promise<void> {
     const key = `${tomb.kind}/${tomb.id}`;
     const base = state.baselines[key];
+    if (base && base.revision >= tomb.revision) return;
     const raw = await this.readLocal(tomb.kind, tomb.id, todoMap, state);
     const local = raw !== null && "seeded" in raw && raw.seeded === true && !base ? null : raw;
     if (local !== null) {
       const localHash = await this.hashLocal(tomb.kind, local);
-      const dirty =
-        !base ||
-        localHash !== base.hash ||
-        (tomb.kind === "todo" && this.localRevision(tomb.kind, local) > base.revision);
+      const dirty = !base || localHash !== base.hash;
       if (dirty) {
         this.upsertConflict(state, {
           kind: tomb.kind,
@@ -602,16 +628,18 @@ export class SyncEngine {
     const result: { object: PendingObject; bytes: ArrayBuffer }[] = [];
     const images = await this.deps.content.listImages(this.deps.projectId);
     for (const image of images) {
-      const key = `image/${image.path}`;
-      if (this.conflictSettled(state, "image", image.path)) continue;
+      const id = image.path.replace(/^images\//, "");
+      const key = `image/${id}`;
+      if (this.conflictSettled(state, "image", id)) continue;
       const bytes = await image.blob.arrayBuffer();
       const hash = await sha256Hex(bytes);
       const baseline = state.baselines[key];
       if (baseline && baseline.hash === hash) continue;
+      if (state.rejected.some((item) => changeKey(item) === key && item.hash === hash)) continue;
       result.push({
         object: {
           kind: "image",
-          id: image.path,
+          id,
           baseRevision: baseline?.revision ?? 0,
           revision: (baseline?.revision ?? 0) + 1,
           hash,
@@ -627,12 +655,12 @@ export class SyncEngine {
     if (!pending) return;
     let results: PushItemResult[];
     try {
-      const response = await this.deps.server.push(this.deps.projectId, {
-        requestId: pending.requestId,
-        generation: pending.generation,
-        objects: pending.objects,
-        tombstones: pending.tombstones,
-      });
+      // 旧版本队列补齐一次后持久化；重启和重试使用完全相同的请求字节。
+      pending.updatedAt ??= new Date().toISOString();
+      pending.deviceId ??= this.deps.deviceId();
+      await this.saveState();
+      this.assertActive();
+      const response = await this.deps.server.push(this.deps.projectId, pending);
       results = response.results;
     } catch (error) {
       if (error instanceof SyncError && error.code === "IDEMPOTENCY_CONFLICT") {
@@ -697,6 +725,10 @@ export class SyncEngine {
   // ---- 冲突解决 ----
 
   async resolveKeepLocal(kind: SyncKind, id: string): Promise<void> {
+    return this.withLock(() => this.resolveKeepLocalLocked(kind, id));
+  }
+
+  private async resolveKeepLocalLocked(kind: SyncKind, id: string): Promise<void> {
     const state = await this.loadState();
     const key = changeKey({ kind, id });
     const conflict = state.conflicts.find((item) => changeKey(item) === key);
@@ -732,7 +764,7 @@ export class SyncEngine {
     }
     if (kind === "image") {
       const images = await this.deps.content.listImages(this.deps.projectId);
-      const image = images.find((item) => item.path === id);
+      const image = images.find((item) => item.path === `images/${id}`);
       if (!image) throw new SyncError("SERVER_ERROR", "本机图片已不存在。");
       const bytes = await image.blob.arrayBuffer();
       const hash = await sha256Hex(bytes);
@@ -787,6 +819,10 @@ export class SyncEngine {
   }
 
   async resolveUseRemote(kind: SyncKind, id: string): Promise<void> {
+    return this.withLock(() => this.resolveUseRemoteLocked(kind, id));
+  }
+
+  private async resolveUseRemoteLocked(kind: SyncKind, id: string): Promise<void> {
     const state = await this.loadState();
     const key = changeKey({ kind, id });
     const conflict = state.conflicts.find((item) => changeKey(item) === key);
@@ -815,6 +851,10 @@ export class SyncEngine {
 
   /** 解决前重新校验双方版本；变化则抛 REVISION_CONFLICT 由 UI 刷新比较（§9.2）。 */
   async revalidate(kind: SyncKind, id: string): Promise<boolean> {
+    return this.withLock(() => this.revalidateLocked(kind, id));
+  }
+
+  private async revalidateLocked(kind: SyncKind, id: string): Promise<boolean> {
     const state = await this.loadState();
     const key = changeKey({ kind, id });
     const conflict = state.conflicts.find((item) => changeKey(item) === key);
@@ -843,7 +883,7 @@ export class SyncEngine {
     }
     if (kind === "image") {
       const images = await this.deps.content.listImages(this.deps.projectId);
-      return images.find((item) => item.path === id)?.blob ?? null;
+      return images.find((item) => item.path === `images/${id}`)?.blob ?? null;
     }
     if (kind === "classification") {
       const [categories, tags, revisions] = await Promise.all([
@@ -878,12 +918,6 @@ export class SyncEngine {
     return null;
   }
 
-  private localRevision(kind: SyncKind, local: LocalSyncValue): number {
-    if (kind === "todo") return (local as Todo).revision;
-    if (kind === "classification" || kind === "index") return (local as RawLocal).revision;
-    return 1;
-  }
-
   private async hashLocal(kind: SyncKind, local: LocalSyncValue): Promise<string> {
     if (kind === "todo") {
       return sha256Hex(serializeTodo(local as Todo, this.deps.deviceId()));
@@ -904,11 +938,7 @@ export class SyncEngine {
       const text = typeof data === "string" ? data : new TextDecoder().decode(data);
       const doc = parseTodoDoc(text);
       const todo = todoFromDoc(id, doc, revision);
-      const full: Todo = {
-        ...todo,
-        title: deriveTitle(todo.body) || "未命名 Todo",
-      };
-      await this.deps.content.upsertTodoRemote(this.deps.projectId, full);
+      await this.deps.content.upsertTodoRemote(this.deps.projectId, todo);
       return;
     }
     if (kind === "classification") {
@@ -938,7 +968,7 @@ export class SyncEngine {
     if (kind === "image") {
       const blob =
         data instanceof ArrayBuffer ? new Blob([data]) : new Blob([data as unknown as BlobPart]);
-      await this.deps.content.putImage(this.deps.projectId, id, blob);
+      await this.deps.content.putImage(this.deps.projectId, `images/${id}`, blob);
     }
   }
 
@@ -979,17 +1009,60 @@ export class SyncEngine {
   // ---- 查询（UI） ----
 
   async getState(): Promise<SyncStateData> {
-    return this.loadState();
+    return this.withLock(async () => structuredClone(await this.loadState()));
+  }
+
+  async getPendingCount(): Promise<number> {
+    return this.withLock(async () => {
+      const state = await this.loadState();
+      const keys = new Set(
+        [
+          ...state.conflicts,
+          ...state.rejected,
+          ...(state.pending?.objects ?? []),
+          ...(state.pending?.tombstones ?? []),
+        ].map(changeKey),
+      );
+      const todos = await this.deps.content.listTodos(this.deps.projectId);
+      const candidates: { kind: SyncKind; id: string; value: LocalSyncValue }[] = todos
+        .filter((todo) => !todo.deletedAt)
+        .map((todo) => ({ kind: "todo", id: todo.id, value: todo }));
+      for (const kind of ["classification", "index"] as const) {
+        const value = await this.readLocal(kind, kind, undefined, state);
+        if (value) candidates.push({ kind, id: kind, value });
+      }
+      for (const image of await this.deps.content.listImages(this.deps.projectId)) {
+        candidates.push({
+          kind: "image",
+          id: image.path.replace(/^images\//, ""),
+          value: image.blob,
+        });
+      }
+      for (const item of candidates) {
+        const key = changeKey(item);
+        try {
+          if ((await this.hashLocal(item.kind, item.value)) !== state.baselines[key]?.hash)
+            keys.add(key);
+        } catch {
+          keys.add(key);
+        }
+      }
+      for (const tomb of await this.deps.content.getPendingTombstones(this.deps.projectId))
+        keys.add(`todo/${tomb.id}`);
+      return keys.size;
+    });
   }
 
   async setAutoSync(enabled: boolean): Promise<void> {
-    const state = await this.loadState();
-    state.autoSync = enabled;
-    await this.saveState();
+    await this.withLock(async () => {
+      const state = await this.loadState();
+      state.autoSync = enabled;
+      await this.saveState();
+    });
   }
 
   async remotePayload(kind: SyncKind, id: string): Promise<string | null> {
-    const state = await this.loadState();
+    const state = await this.getState();
     const conflict = state.conflicts.find((item) => item.kind === kind && item.id === id);
     if (!conflict?.remoteHash) return null;
     const data = await this.deps.server.getPayload(conflict.remoteHash);

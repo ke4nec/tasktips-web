@@ -34,6 +34,8 @@ export interface PushTombstone {
 }
 
 export interface PushRequest {
+  updatedAt?: string;
+  deviceId?: string;
   requestId: string;
   generation: number;
   objects: PushObject[];
@@ -81,9 +83,7 @@ export class SyncError extends Error {
 }
 
 export function isTerminalSyncAuth(code: SyncErrorCode): boolean {
-  return (
-    code === "AUTHENTICATION_REQUIRED" || code === "ACCOUNT_DISABLED" || code === "DEVICE_REVOKED"
-  );
+  return code === "ACCOUNT_DISABLED" || code === "DEVICE_REVOKED";
 }
 
 export interface SyncPage {

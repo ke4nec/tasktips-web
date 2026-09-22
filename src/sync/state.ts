@@ -22,6 +22,8 @@ export interface PendingTombstone {
 }
 
 export interface PendingPush {
+  updatedAt?: string;
+  deviceId?: string;
   requestId: string;
   generation: number;
   objects: PendingObject[];

@@ -5,6 +5,9 @@ export type TodoStatus = "open" | "completed";
 export type TodoPriority = 0 | 1 | 2 | 3;
 
 export interface Todo {
+  extra?: Record<string, unknown>;
+  /** 仅本地保存：未修改文档按原始字节同步。 */
+  source?: { raw: string; fingerprint: string };
   id: string;
   title: string;
   body: string;

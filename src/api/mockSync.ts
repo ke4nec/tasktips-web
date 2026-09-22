@@ -254,15 +254,43 @@ export class MockSyncServer implements SyncServerPort {
   async bootstrap(projectId: string, cursor: string, limit: number) {
     this.maybeFail();
     const state = this.stateOf(projectId);
-    const { changes, nextCursor, done } = this.page(state, cursor, Math.min(limit, PAGE_LIMIT_MAX));
-    return { generation: state.generation, changes, nextCursor, done };
+    const offset = cursor.startsWith("b:") ? cursor.slice(2) : cursor;
+    const { changes, nextCursor, done } = this.page(state, offset, Math.min(limit, PAGE_LIMIT_MAX));
+    return {
+      generation: state.generation,
+      changes,
+      nextCursor: done ? String(state.sequence) : `b:${nextCursor}`,
+      done,
+    };
   }
 
   async pull(projectId: string, cursor: string, limit: number) {
     this.maybeFail();
     const state = this.stateOf(projectId);
-    const { changes, nextCursor, done } = this.page(state, cursor, Math.min(limit, PAGE_LIMIT_MAX));
-    return { generation: state.generation, changes, nextCursor, done };
+    const after = cursor === "" ? 0 : Number(cursor);
+    if (!Number.isInteger(after) || after < 0 || after > state.sequence)
+      throw new SyncError("CURSOR_INVALID", "同步游标无效。");
+    const entries = state.history
+      .filter((entry) => entry.sequence > after)
+      .slice(0, Math.min(limit, PAGE_LIMIT_MAX));
+    const changes: (ObjectEnvelope | Tombstone)[] = entries.map((entry) =>
+      entry.deleted
+        ? {
+            kind: entry.kind,
+            id: entry.id,
+            revision: entry.revision,
+            deletedAt: entry.at,
+            projectId,
+          }
+        : { kind: entry.kind, id: entry.id, revision: entry.revision, hash: entry.hash! },
+    );
+    const next = entries.at(-1)?.sequence ?? after;
+    return {
+      generation: state.generation,
+      changes,
+      nextCursor: String(next),
+      done: next >= state.sequence,
+    };
   }
 
   async push(projectId: string, request: PushRequest) {

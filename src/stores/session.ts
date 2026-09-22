@@ -3,11 +3,12 @@ import { computed, ref } from "vue";
 
 import { api, setTokenProvider } from "@/api";
 import { DEMO_EMAIL, DEMO_PASSWORD } from "@/api/mock";
-import { ApiError, type Account } from "@/api/types";
+import { ApiError, isTerminalAuthFailure, type Account } from "@/api/types";
 import { useProjectStore } from "@/stores/project";
 
 export const DEVICE_ID_PREFIX = "tasktips:device-id";
 export const LAST_PROJECT_KEY = "tasktips:last-project";
+export const LOCAL_SESSION_KEY = "tasktips:local-session";
 export const PENDING_LOGOUT_KEY = "tasktips:pending-logout";
 
 // access token 仅存内存（§8.2），HttpApi 经 provider 读取，脚本存储中没有刷新令牌。
@@ -63,8 +64,33 @@ export const useSessionStore = defineStore("session", () => {
   const deviceId = ref<string | null>(null);
   const isAuthenticated = computed(() => account.value !== null && accessToken.value !== null);
 
+  const canAccessWorkspace = computed(() => account.value !== null);
+
+  function restoreLocalAccount(): boolean {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LOCAL_SESSION_KEY) ?? "null") as Account | null;
+      if (!saved || typeof saved.email !== "string" || !saved.email) return false;
+      account.value = { email: saved.email };
+      deviceId.value = getOrCreateDeviceId(saved.email);
+      accessToken.value = null;
+      currentToken = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function applyAuth(result: { accessToken: string; account: Account }, email: string) {
+    if (account.value && account.value.email !== result.account.email) {
+      window.dispatchEvent(new Event("tasktips:session-reset"));
+      useProjectStore().reset();
+    }
     account.value = result.account;
+    try {
+      localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify({ email: result.account.email }));
+    } catch {
+      /* storage may be unavailable */
+    }
     accessToken.value = result.accessToken;
     currentToken = result.accessToken;
     deviceId.value = getOrCreateDeviceId(email);
@@ -128,8 +154,13 @@ export const useSessionStore = defineStore("session", () => {
         applyAuth(result, result.account.email);
       });
       return true;
-    } catch {
-      clearAuth();
+    } catch (error) {
+      if (error instanceof ApiError && isTerminalAuthFailure(error.code)) {
+        clearAuth();
+        window.dispatchEvent(new Event("tasktips:session-reset"));
+      } else {
+        restoreLocalAccount();
+      }
       return false;
     }
   }
@@ -156,16 +187,25 @@ export const useSessionStore = defineStore("session", () => {
     }
 
     const ok = await refreshAccess();
-    if (!ok || !account.value || !deviceId.value) return ok;
+    if (!ok || !account.value || !deviceId.value) {
+      if (account.value) await useProjectStore().load();
+      return canAccessWorkspace.value;
+    }
     try {
       await api.registerDevice({ deviceId: deviceId.value, name: browserName() });
     } catch {
       // 设备注册失败不阻断进入工作台
     }
+    await useProjectStore().load();
     return ok;
   }
 
   function clearAuth() {
+    try {
+      localStorage.removeItem(LOCAL_SESSION_KEY);
+    } catch {
+      /* storage may be unavailable */
+    }
     account.value = null;
     accessToken.value = null;
     currentToken = null;
@@ -218,6 +258,7 @@ export const useSessionStore = defineStore("session", () => {
     accessToken,
     deviceId,
     isAuthenticated,
+    canAccessWorkspace,
     login,
     activate,
     refreshAccess,

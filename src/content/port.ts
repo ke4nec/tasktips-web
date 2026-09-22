@@ -54,6 +54,9 @@ export interface RecoveryCopy {
 // 内容仓储抽象：P3 由内存 Mock 实现；P5 替换为 Dexie（IndexedDB）实现，
 // P6 在其上叠加同步引擎。业务 store 只依赖此接口。
 export interface ContentPort {
+  /** 固定账号与有效期；失效中的事务必须回滚，不能跟随全局会话切换。 */
+  forUser(userId: string, isActive?: () => boolean): ContentPort;
+  listLocalProjects(): Promise<string[]>;
   listTodos(projectId: string): Promise<Todo[]>;
   createTodo(projectId: string, input: CreateTodoInput): Promise<Todo>;
   updateTodo(projectId: string, id: string, patch: TodoPatch): Promise<Todo>;

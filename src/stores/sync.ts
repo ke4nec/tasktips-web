@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
+import { HTTP_API_MODE } from "@/api/mode";
 import { HttpSyncServer } from "@/api/httpSync";
 import { MockSyncServer } from "@/api/mockSync";
 import { content } from "@/content";
@@ -18,12 +19,17 @@ export const mockSyncServer = new MockSyncServer();
 // 按模式选择同步服务端：VITE_API_MODE=http 时走真实云端
 // （引擎与页面统一从这里取，SyncServerPort 两个实现可互换）。
 export function syncServerFor(projectId: string): SyncServerPort {
-  if (import.meta.env.VITE_API_MODE !== "http") return mockSyncServer;
+  if (!HTTP_API_MODE) return mockSyncServer;
   const session = useSessionStore();
+  const email = session.account?.email;
+  const deviceId = session.deviceId ?? "web";
   return new HttpSyncServer({
     projectId,
-    getToken: () => session.accessToken ?? null,
-    deviceId: () => session.deviceId ?? "web",
+    getToken: () => {
+      if (session.account?.email !== email) throw new Error("同步账号已变化。");
+      return session.accessToken ?? null;
+    },
+    deviceId: () => deviceId,
   });
 }
 
@@ -61,13 +67,18 @@ export const useSyncStore = defineStore("sync", () => {
     let engine = engines.get(scope);
     if (!engine) {
       const session = useSessionStore();
+      const email = session.account?.email ?? "local";
+      const deviceId = session.deviceId ?? "web";
       engine = new SyncEngine({
         content,
         server: syncServerFor(projectId),
-        deviceId: () => session.deviceId ?? "web",
+        deviceId: () => deviceId,
         projectId,
-        userId: session.account?.email ?? "local",
-        refreshSession: () => session.refreshAccess(),
+        userId: email,
+        refreshSession: () =>
+          (session.account?.email ?? "local") === email
+            ? session.refreshAccess()
+            : Promise.resolve(false),
         online: () => (typeof navigator === "undefined" ? true : navigator.onLine !== false),
       });
       engines.set(scope, engine);
@@ -75,15 +86,25 @@ export const useSyncStore = defineStore("sync", () => {
     return engine;
   }
 
+  function isActiveEngine(projectId: string, engine: SyncEngine) {
+    return engines.get(scopeOf(projectId)) === engine;
+  }
+
   async function refresh(projectId: string = currentProjectId.value) {
     if (!projectId) return;
+    const scope = scopeOf(projectId);
     const engine = getEngine(projectId);
     const state = await engine.getState();
+    if (!isActiveEngine(projectId, engine)) return;
+    const count = await engine.getPendingCount();
+    if (
+      scope !== scopeOf(projectId) ||
+      (currentProjectId.value && projectId !== currentProjectId.value)
+    )
+      return;
     // 引擎状态为裸对象：浅拷贝后赋值，否则同引用不触发模板更新。
     detail.value = { ...state };
-    pendingCount.value = state.pending
-      ? state.pending.objects.length + state.pending.tombstones.length
-      : 0;
+    pendingCount.value = count;
     if (syncing.value) {
       status.value = "syncing";
     } else if (state.conflicts.length > 0) {
@@ -99,11 +120,19 @@ export const useSyncStore = defineStore("sync", () => {
     } else if (typeof navigator !== "undefined" && navigator.onLine === false) {
       status.value = "offline";
     } else {
-      status.value = "synced";
+      status.value = count > 0 ? "pending" : "synced";
     }
   }
 
+  async function logoutPendingCount(): Promise<number> {
+    const projects = await content.listLocalProjects();
+    let count = 0;
+    for (const id of projects) count += await getEngine(id).getPendingCount();
+    return count;
+  }
+
   async function reloadContent(projectId: string) {
+    if (projectId !== currentProjectId.value || !useSessionStore().account) return;
     const todos = useTodoStore();
     const classification = useClassificationStore();
     await Promise.all([todos.load(projectId), classification.load(projectId)]);
@@ -118,11 +147,12 @@ export const useSyncStore = defineStore("sync", () => {
       if (options.requireSuccess) throw new Error("同步正在进行，请稍后再退出。");
       return "busy";
     }
+    const engine = getEngine(projectId);
     syncing.value = true;
     status.value = "syncing";
     try {
-      const result = await getEngine(projectId).syncNow({ manual: true });
-      await reloadContent(projectId);
+      const result = await engine.syncNow({ manual: true });
+      if (isActiveEngine(projectId, engine)) await reloadContent(projectId);
       if (options.requireSuccess && result !== "synced") {
         throw new Error(
           result === "conflict"
@@ -132,8 +162,10 @@ export const useSyncStore = defineStore("sync", () => {
       }
       return result;
     } finally {
-      syncing.value = false;
-      await refresh(projectId);
+      if (isActiveEngine(projectId, engine)) {
+        syncing.value = false;
+        await refresh(projectId);
+      }
     }
   }
 
@@ -162,18 +194,21 @@ export const useSyncStore = defineStore("sync", () => {
   async function ensureProject(projectId: string) {
     currentProjectId.value = projectId;
     wireGlobal();
-    await refresh(projectId);
-    // 启动与项目进入时触发自动同步（§9.3），不阻塞界面。
     const engine = getEngine(projectId);
+    await refresh(projectId);
+    if (!isActiveEngine(projectId, engine) || currentProjectId.value !== projectId) return;
+    // 启动与项目进入时触发自动同步（§9.3），不阻塞界面。
     const state = await engine.getState();
     if (state.autoSync) {
       syncing.value = true;
       try {
         await engine.syncNow();
-        await reloadContent(projectId);
+        if (isActiveEngine(projectId, engine)) await reloadContent(projectId);
       } finally {
-        syncing.value = false;
-        await refresh(projectId);
+        if (isActiveEngine(projectId, engine) && currentProjectId.value === projectId) {
+          syncing.value = false;
+          await refresh(projectId);
+        }
       }
     }
   }
@@ -182,12 +217,19 @@ export const useSyncStore = defineStore("sync", () => {
     if (!projectId) return;
     status.value = "pending";
     // 本地保存后触发自动同步（§9.3），合并为单飞任务；关闭时仅标记待同步。
-    if (detail.value && !detail.value.autoSync) return;
-    void getEngine(projectId)
+    if (detail.value && !detail.value.autoSync) {
+      void refresh(projectId).catch(() => undefined);
+      return;
+    }
+    const engine = getEngine(projectId);
+    void engine
       .syncNow()
-      .then(() => reloadContent(projectId))
-      .then(() => refresh(projectId))
-      .catch(() => refresh(projectId));
+      .then(async () => {
+        if (!isActiveEngine(projectId, engine)) return;
+        await reloadContent(projectId);
+        await refresh(projectId);
+      })
+      .catch(() => undefined);
   }
 
   async function setAutoSync(projectId: string, enabled: boolean) {
@@ -220,7 +262,9 @@ export const useSyncStore = defineStore("sync", () => {
       const session = useSessionStore();
       const current = `${session.account?.email ?? "local"}\n${currentProjectId.value}`;
       if (scope === current && currentProjectId.value) {
-        void reloadContent(currentProjectId.value).then(() => refresh(currentProjectId.value));
+        void reloadContent(currentProjectId.value)
+          .then(() => refresh(currentProjectId.value))
+          .catch(() => undefined);
       }
     });
     if (typeof window !== "undefined") {
@@ -264,6 +308,7 @@ export const useSyncStore = defineStore("sync", () => {
     syncing,
     detail,
     pendingCount,
+    logoutPendingCount,
     ensureProject,
     syncNowManual,
     notifyDirty,

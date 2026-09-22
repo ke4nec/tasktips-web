@@ -176,6 +176,9 @@ const CODE_MAP: Record<string, SyncErrorCode> = {
 
 function syncErrorFromResponse(status: number, body: unknown): SyncError {
   const code = (body as { code?: string } | null)?.code ?? "";
+  if (code === "ACCOUNT_DISABLED" || code === "DEVICE_REVOKED") {
+    return new SyncError(code, "账号或设备已被停用。");
+  }
   if (status === 401) return new SyncError("AUTHENTICATION_REQUIRED", "登录已失效。");
   if (status === 429) return new SyncError("SERVER_ERROR", "请求过于频繁，稍后重试。");
   if (status >= 500) return new SyncError("SERVER_ERROR", "云端暂时不可用。");
@@ -263,8 +266,10 @@ export class HttpSyncServer implements SyncServerPort {
   }
 
   async push(projectId: string, request: PushRequest): Promise<{ results: PushItemResult[] }> {
-    const now = formatCloudTimestamp();
-    const deviceId = this.options.deviceId();
+    request.updatedAt ??= new Date().toISOString();
+    request.deviceId ??= this.options.deviceId();
+    const now = formatCloudTimestamp(new Date(request.updatedAt));
+    const deviceId = request.deviceId;
     const data = await this.json<{ results: WirePushItem[] }>(
       `/api/v1/projects/${encodeURIComponent(projectId)}/sync/push`,
       {

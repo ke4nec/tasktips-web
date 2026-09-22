@@ -22,6 +22,7 @@ const repeat = ref("");
 const error = ref("");
 const pending = ref(false);
 const logoutOpen = ref(false);
+const logoutCount = ref(0);
 
 async function submit() {
   error.value = "";
@@ -55,7 +56,11 @@ async function submit() {
 }
 
 async function openLogout() {
-  if (sync.currentProjectId) await sync.refresh(sync.currentProjectId).catch(() => undefined);
+  try {
+    logoutCount.value = await sync.logoutPendingCount();
+  } catch {
+    logoutCount.value = 1;
+  }
   logoutOpen.value = true;
 }
 
@@ -135,7 +140,7 @@ async function onLogoutConfirm(choice: LogoutChoice) {
     </div>
     <LogoutDialog
       :open="logoutOpen"
-      :pending-count="sync.pendingCount"
+      :pending-count="logoutCount"
       @update:open="logoutOpen = $event"
       @confirm="onLogoutConfirm"
     />

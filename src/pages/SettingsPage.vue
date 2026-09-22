@@ -6,12 +6,13 @@ import AccountSection from "@/components/settings/AccountSection.vue";
 import AppearanceSection from "@/components/settings/AppearanceSection.vue";
 import DevicesSection from "@/components/settings/DevicesSection.vue";
 import StorageSection from "@/components/settings/StorageSection.vue";
-import { DEFAULT_PROJECT_ID } from "@/stores/project";
+import { useProjectStore } from "@/stores/project";
 import { useSyncStore } from "@/stores/sync";
 
 const route = useRoute();
 const router = useRouter();
 const sync = useSyncStore();
+const projects = useProjectStore();
 
 const sections = [
   { id: "appearance", label: "外观与编辑" },
@@ -28,10 +29,13 @@ const section = computed<SectionId>(() => {
   return sections.some((item) => item.id === raw) ? (raw as SectionId) : "appearance";
 });
 
-// 存储分区需要项目上下文：取当前同步项目，回退默认项目。
+// 存储分区需要项目上下文：取当前或上次可访问的真实项目。
 const storageProjectId = computed(
   () =>
-    sync.currentProjectId || (route.params.projectId as string | undefined) || DEFAULT_PROJECT_ID,
+    sync.currentProjectId ||
+    (route.params.projectId as string | undefined) ||
+    projects.entryProject()?.id ||
+    "",
 );
 
 function goSection(id: SectionId) {
@@ -64,7 +68,8 @@ function goSection(id: SectionId) {
         <AppearanceSection v-if="section === 'appearance'" />
         <AccountSection v-else-if="section === 'account'" />
         <DevicesSection v-else-if="section === 'devices'" />
-        <StorageSection v-else :project-id="storageProjectId" />
+        <StorageSection v-else-if="storageProjectId" :project-id="storageProjectId" />
+        <p v-else>请先选择项目，再管理存储与备份。</p>
       </div>
     </div>
   </div>

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
-import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
 
 import AppDialog from "@/components/AppDialog.vue";
 import AppIcon from "@/components/AppIcon.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import IconButton from "@/components/IconButton.vue";
 import TodoRow from "@/components/list/TodoRow.vue";
+import { registerEditorPersistence } from "@/editor/persistence";
+import { useSessionStore } from "@/stores/session";
 import { content } from "@/content";
 import { formatDueDate, formatLongDate } from "@/domain/datetime";
 import { tryAcquireTaskLock } from "@/sync/locks";
@@ -29,24 +31,29 @@ const todos = useTodoStore();
 const classification = useClassificationStore();
 const sync = useSyncStore();
 const ui = useUiStore();
+const auth = useSessionStore();
+let loadSequence = 0;
+let routeFlush = false;
 
 // 任务编辑会话锁：被其他标签页持有时只读展示并提示（§9.3）。
 const readonlyLock = ref(false);
 let releaseLock: (() => void) | null = null;
 
-function acquireTaskLock() {
+async function acquireTaskLock(pid: string, id: string, sequence: number) {
   releaseLock?.();
   releaseLock = null;
-  readonlyLock.value = false;
-  if (isNew.value || createdId.value !== null || !todo.value) return;
-  // 持有式锁不能 await（会等到释放）；后台获取，拒绝时转只读并重挂编辑器。
-  void tryAcquireTaskLock(projectId.value, todo.value.id).then((held) => {
-    if (held === null) {
-      readonlyLock.value = true;
-    } else {
-      releaseLock = held;
-    }
-  });
+  readonlyLock.value = true;
+  if (id === "new") {
+    readonlyLock.value = false;
+    return;
+  }
+  const held = await tryAcquireTaskLock(`${auth.account?.email ?? "local"}:${pid}`, id);
+  if (sequence !== loadSequence) {
+    held?.();
+    return;
+  }
+  readonlyLock.value = held === null;
+  releaseLock = held;
 }
 
 const projectId = computed(() => route.params.projectId as string);
@@ -113,29 +120,35 @@ function persistPrefs() {
   savePrefs(prefs.value);
 }
 
-async function persistTodo(text: string): Promise<void> {
-  if (isNew.value && createdId.value === null) {
-    if (!text.trim()) return; // 空草稿不落库，离开时丢弃
-    const created = await content.createTodo(projectId.value, {
-      body: text,
-      dueDate: route.query.dueDate as string | undefined,
-      categoryId: (route.query.categoryId as string | undefined) ?? undefined,
-      tags: route.query.tag ? [route.query.tag as string] : [],
-    });
-    createdId.value = created.id;
-    todo.value = created;
-    await router.replace({
-      name: "todo-detail",
-      params: { projectId: projectId.value, todoId: created.id },
-      query: route.query,
-    });
-    await todos.reload();
-    return;
-  }
-  const id = createdId.value ?? todoId.value;
-  await content.updateTodo(projectId.value, id, { body: text });
-  await todos.reload();
-  sync.notifyDirty(projectId.value);
+// 保存闭包绑定创建时的账号、项目和任务；路由变化不能改变写入目标。
+function createPersist(pid: string, initialId: string) {
+  const email = auth.account?.email ?? "local";
+  const repository = content.forUser(email, () => (auth.account?.email ?? "local") === email);
+  const query = { ...route.query };
+  let id = initialId;
+  return async (text: string): Promise<void> => {
+    if (id === "new") {
+      if (!text.trim()) return;
+      const created = await repository.createTodo(pid, {
+        body: text,
+        dueDate: query.dueDate as string | undefined,
+        categoryId: query.categoryId as string | undefined,
+        tags: query.tag ? [query.tag as string] : [],
+      });
+      id = created.id;
+      createdId.value = id;
+      todo.value = created;
+      void acquireTaskLock(pid, id, loadSequence);
+      if (!routeFlush && projectId.value === pid && todoId.value === "new") {
+        // 不等待路由守卫，避免首存与 guard 的 flush 相互等待。
+        void router.replace({ name: "todo-detail", params: { projectId: pid, todoId: id }, query });
+      }
+    } else {
+      await repository.updateTodo(pid, id, { body: text });
+    }
+    sync.notifyDirty(pid);
+    if (projectId.value === pid) await todos.reload();
+  };
 }
 
 function schedulePreview() {
@@ -151,17 +164,23 @@ function schedulePreview() {
 }
 
 async function loadTodo() {
+  const pid = projectId.value;
+  const id = todoId.value;
+  if (createdId.value === id && todo.value?.id === id) return;
+  const sequence = ++loadSequence;
   loading.value = true;
   loadError.value = "";
   try {
     // 同组件切换任务（编辑器列表行点击）只触发参数更新守卫，不触发路由离开守卫；
     // 先冲刷上一个会话防抖窗口内的输入，再加载新任务（§5.3 不丢未保存内容）。
     await session.value?.flushPersist();
+    if (sequence !== loadSequence) return;
+    createdId.value = null;
     const results = await Promise.allSettled([
-      todos.load(projectId.value),
-      classification.load(projectId.value),
+      todos.load(pid),
+      classification.load(pid),
       // 预取项目图片二进制到内存注册，编辑器以 Blob URL 展示（§5.3）。
-      content.listImages(projectId.value).catch(() => []),
+      content.listImages(pid).catch(() => []),
     ]);
     if (import.meta.env.DEV) {
       console.log("[editor-debug] loads settled", results.map((result) => result.status).join(","));
@@ -169,35 +188,31 @@ async function loadTodo() {
     for (const result of results) {
       if (result.status === "rejected") throw result.reason;
     }
-    if (!isNew.value) {
-      const found = todos.todos.find((item) => item.id === todoId.value);
+    if (sequence !== loadSequence) return;
+    if (id !== "new") {
+      const found = todos.todos.find((item) => item.id === id);
       if (!found) throw new ApiError("NOT_FOUND", "任务不存在。", 404);
       todo.value = found;
     } else {
       todo.value = null;
     }
-    const previous = session.value;
-    const created = new EditorSession(todo.value?.body ?? "", (text) => persistTodo(text));
-    // 新建首存：同一编辑会话的历史延续到新实例（§5.2）。
-    if (previous && createdId.value !== null && todo.value?.id === createdId.value) {
-      created.adoptHistory(previous);
-    }
+    const created = new EditorSession(todo.value?.body ?? "", createPersist(pid, id));
     session.value = created;
     previewText.value = created.text.value;
     // 同一会话内 existing→existing 导航复用组件，需把新正文推给常驻适配器。
     instantRef.value?.setText(previewText.value);
     splitRef.value?.sourceRef?.setText(previewText.value);
     splitRef.value?.previewRef?.setText(previewText.value);
-    acquireTaskLock();
+    await acquireTaskLock(pid, id, sequence);
   } catch (error) {
     loadError.value = error instanceof ApiError ? error.message : "任务加载失败。";
   } finally {
-    loading.value = false;
+    if (sequence === loadSequence) loading.value = false;
   }
 }
 
 onMounted(loadTodo);
-watch(todoId, () => void loadTodo());
+watch([projectId, todoId], () => void loadTodo());
 
 function onAdapterChange(text: string) {
   session.value?.setText(text);
@@ -233,6 +248,7 @@ function pushToAdapters() {
 
 async function switchMode(next: EditorMode) {
   if (next === mode.value || !session.value) return;
+  if (mode.value === "instant") instantRef.value?.flushChanges();
   // 切换先提交当前事务，再更新另一模式显示（§5.2）。
   const applied = session.value.requestMode(next);
   if (applied === null) {
@@ -449,6 +465,13 @@ async function toggleComplete() {
 }
 
 async function retrySave() {
+  await flushCurrentSession();
+}
+
+async function flushCurrentSession() {
+  if (!loading.value && !readonlyLock.value && mode.value === "instant") {
+    instantRef.value?.flushChanges();
+  }
   await session.value?.flushPersist();
 }
 
@@ -468,17 +491,31 @@ function goNew() {
 }
 
 // 站内导航不得丢弃未持久化内容（§5.3）；空草稿直接丢弃。
-onBeforeRouteLeave(async () => {
-  if (!session.value) return true;
-  if (isNew.value && createdId.value === null && !session.value.text.value.trim()) return true;
-  await session.value.flushPersist();
-  return session.value.saveState.value !== "error";
+async function flushBeforeNavigation() {
+  routeFlush = true;
+  try {
+    await flushCurrentSession();
+    return session.value?.saveState.value !== "error";
+  } finally {
+    routeFlush = false;
+  }
+}
+
+onBeforeRouteLeave(flushBeforeNavigation);
+onBeforeRouteUpdate((to) => {
+  if (to.params.projectId === projectId.value && to.params.todoId === createdId.value) return true;
+  return flushBeforeNavigation();
+});
+
+const unregisterPersistence = registerEditorPersistence(async () => {
+  await flushCurrentSession();
+  if (session.value?.saveState.value === "error") throw new Error("编辑内容未保存，请重试后继续。");
 });
 
 function onVisibilityHidden() {
   // 离开/隐藏页面尽力刷新，不依赖回调保证正确性（§5.3）。
   if (session.value && (isNew.value ? session.value.text.value.trim() : true)) {
-    void session.value.flushPersist();
+    void flushCurrentSession();
   }
 }
 
@@ -488,7 +525,7 @@ function onVisibilityChange() {
 
 function onFlushEditors() {
   // 版本更新前的保存刷新与页面卸载尽力刷新（正确性不依赖回调 §5.3）。
-  if (session.value) void session.value.flushPersist();
+  if (session.value) void flushCurrentSession();
 }
 
 onMounted(() => {
@@ -498,6 +535,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  loadSequence += 1;
+  unregisterPersistence();
   document.removeEventListener("visibilitychange", onVisibilityChange);
   window.removeEventListener("tasktips:flush-editors", onFlushEditors);
   window.removeEventListener("beforeunload", onFlushEditors);
