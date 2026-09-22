@@ -5,6 +5,7 @@ async function loginAsDemo(page: Page) {
   await page.getByLabel("邮箱").fill("demo@example.com");
   await page.getByLabel("密码", { exact: true }).fill("Demo12345678");
   await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page).toHaveURL(/\/app\/p\/demo\/today/);
 }
 
 test("登录全流程：成功后单项目直接进入今日", async ({ page }) => {
