@@ -50,6 +50,7 @@ test("主题切换后刷新仍保持", async ({ page }) => {
 test("命令面板可导航到收件箱", async ({ page }) => {
   await mockLogin(page);
   await page.goto("/app/p/demo/today");
+  await expect(page.getByRole("heading", { name: "今日" })).toBeVisible();
   await page.keyboard.press("Control+k");
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByPlaceholder("搜索…").fill("收件箱");
