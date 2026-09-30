@@ -231,7 +231,11 @@ export function groupCompleted(todos: Todo[]): TodoGroup[] {
     .map(([key, items]) => ({ key, label: key, items }));
 }
 
-// 即将到期的未来时间段分组：明天 / 未来 7 天 / 更晚。
+// 未来时间段分组（与移动端今日页预览同口径 §4.1）：
+// 明天(+1)／3天内(+2~+3)／7天内(+4~+7)／30天内(+8~+30)互斥，+30天以上归“更晚”。
+// 今日页预览只取前四组（见 UPCOMING_PREVIEW_KEYS），即将到期页展示全部五组。
+export const UPCOMING_PREVIEW_KEYS = ["tomorrow", "d3", "d7", "d30"] as const;
+
 export function groupUpcoming(todos: Todo[], today: string): TodoGroup[] {
   const plus = (days: number) => {
     const date = new Date(`${today}T00:00:00`);
@@ -240,18 +244,24 @@ export function groupUpcoming(todos: Todo[], today: string): TodoGroup[] {
     const day = String(date.getDate()).padStart(2, "0");
     return `${date.getFullYear()}-${month}-${day}`;
   };
-  const tomorrow = plus(1);
-  const weekLater = plus(7);
+  const d1 = plus(1);
+  const d3 = plus(3);
+  const d7 = plus(7);
+  const d30 = plus(30);
   const groups: TodoGroup[] = [
     { key: "tomorrow", label: "明天", items: [] },
-    { key: "week", label: "未来 7 天", items: [] },
+    { key: "d3", label: "3天内", items: [] },
+    { key: "d7", label: "7天内", items: [] },
+    { key: "d30", label: "30天内", items: [] },
     { key: "later", label: "更晚", items: [] },
   ];
   for (const todo of todos) {
     if (!todo.dueDate) continue;
-    if (todo.dueDate <= tomorrow) groups[0].items.push(todo);
-    else if (todo.dueDate <= weekLater) groups[1].items.push(todo);
-    else groups[2].items.push(todo);
+    if (todo.dueDate <= d1) groups[0].items.push(todo);
+    else if (todo.dueDate <= d3) groups[1].items.push(todo);
+    else if (todo.dueDate <= d7) groups[2].items.push(todo);
+    else if (todo.dueDate <= d30) groups[3].items.push(todo);
+    else groups[4].items.push(todo);
   }
   return groups.filter((group) => group.items.length > 0);
 }

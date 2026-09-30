@@ -209,10 +209,33 @@ describe("计数与分组", () => {
     expect(groups.map((group) => group.key)).toEqual(["expired", "today"]);
   });
 
-  it("即将到期按时间段分组", () => {
-    // 09-25 距 09-19 为 6 天，落入“未来 7 天”。
+  it("即将到期按时间段分组（与移动端同口径）", () => {
+    // 09-25 距 09-19 为 6 天，落入“7天内”（+4~+7）。
     const groups = groupUpcoming(runQuery({ view: "upcoming" }, ctx(todos)), TODAY);
-    expect(groups.map((group) => group.key)).toEqual(["week"]);
+    expect(groups.map((group) => group.key)).toEqual(["d7"]);
+  });
+
+  it("未来分组区间互斥：明天/+2~3/+4~7/+8~30/更晚", () => {
+    const items = [
+      todo({ id: "p1", dueDate: "2026-09-20" }),
+      todo({ id: "p2", dueDate: "2026-09-21" }),
+      todo({ id: "p3", dueDate: "2026-09-22" }),
+      todo({ id: "p4", dueDate: "2026-09-23" }),
+      todo({ id: "p7", dueDate: "2026-09-26" }),
+      todo({ id: "p8", dueDate: "2026-09-27" }),
+      todo({ id: "p30", dueDate: "2026-10-19" }),
+      todo({ id: "p31", dueDate: "2026-10-20" }),
+      todo({ id: "nodate" }),
+    ];
+    const groups = groupUpcoming(items, TODAY);
+    const byKey = new Map(groups.map((group) => [group.key, group.items.map((item) => item.id)]));
+    expect(byKey.get("tomorrow")).toEqual(["p1"]);
+    expect(byKey.get("d3")).toEqual(["p2", "p3"]);
+    expect(byKey.get("d7")).toEqual(["p4", "p7"]);
+    expect(byKey.get("d30")).toEqual(["p8", "p30"]);
+    expect(byKey.get("later")).toEqual(["p31"]);
+    // 无日期不进未来分组，空组被过滤。
+    expect([...byKey.values()].flat()).not.toContain("nodate");
   });
 
   it("已完成按完成日期分组", () => {

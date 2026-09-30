@@ -16,6 +16,18 @@ test("今日视图分组展示过期与今天", async ({ page }) => {
   await expect(page.getByText("核对多端同步的交互细节")).toBeVisible();
 });
 
+test("今日页展示未来预览与即将到期入口", async ({ page }) => {
+  await page.goto("/app/p/demo/today");
+  // 种子中 +3 天的“准备产品演示”落入“3天内”预览分组（与移动端同口径）。
+  await expect(page.getByRole("heading", { name: /3天内/ })).toBeVisible();
+  await expect(page.getByText("准备产品演示")).toBeVisible();
+  const more = page.getByRole("link", { name: /查看即将到期/ });
+  await expect(more).toBeVisible();
+  await more.click();
+  await expect(page.getByRole("heading", { name: "即将到期" })).toBeVisible();
+  await expect(page.getByText("准备产品演示")).toBeVisible();
+});
+
 test("完成任务后移出今日并提示", async ({ page }) => {
   await page.goto("/app/p/demo/today");
   // 直接派发 change 事件：勾选后列表重载会替换 DOM，click/check 的可操作等待会竞态超时。

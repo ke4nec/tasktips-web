@@ -116,7 +116,7 @@ Web 按已实现的共同业务规则及移动端补齐能力对齐，不把旧�
 ### 4.1 任务与查询
 
 - 任务状态为 `open`／`completed`，优先级 `0/1/2/3` 对应无、低、中、高；完成设置 `completedAt`，取消完成清空它。
-- 收件箱是全部未完成任务；今日为未完成且 `dueDate <= 本地今天`，按过期／今天分组；即将到期为未来有截止日期的未完成任务；普通视图排除回收站。
+- 收件箱是全部未完成任务；今日为未完成且 `dueDate <= 本地今天`，按过期／今天分组，标题保持“今日”不改“近期”；今日页另在核心分组下方设“接下来”预览分区，把即将到期按明天（+1）／3天内（+2~+3）／7天内（+4~+7)／30天内（+8~+30）互斥展示（仅展示拼接，不改变查询语义；每组默认 5 条、超长展开／收起；今日为空时显示未来安排而非空白页；有筛选时隐藏预览）。即将到期为未来有截止日期的未完成任务，按上述四组另加“更晚”（+30天以上）共五组展示；普通视图排除回收站。侧栏今日计数仍为过期+今天，有过期时标红并带过期数提示，计数 99 以上显示 99+。
 - `dueDate` 是 `YYYY-MM-DD` 日历日期，不转换成 UTC 时间；跨午夜、时区变化和恢复前台时重算视图。截止日期不代表通知提醒。
 - 搜索覆盖标题、正文纯文本和标签，大小写不敏感，保留代码块内容可搜索。目录筛选包含子目录；已选目录与“未分类”取并集，各筛选维度之间取交集。
 - 标签支持全部包含／任一包含／均不包含，默认全部包含；优先级多选取并集。清除筛选同时清除搜索并恢复默认排序。
@@ -518,9 +518,9 @@ Service Worker 注册在 `/app/`，只缓存版本化应用外壳与静态资源
 | <a id="ui-register"></a>邀请注册 | [register.html](../design/register.html) | §8，`/app/register` | 邀请凭据、两次密码、激活与失效提示 |
 | <a id="ui-projects"></a>项目空间 | [projects.html](../design/projects.html) | §3、§8，`/app/projects` | 项目卡片、新建、重命名、空项目入口 |
 | <a id="ui-onboarding"></a>初始化 | [onboarding.html](../design/onboarding.html) | §8、§9，首次下载状态 | 步骤、任务／图片下载进度、失败和离线重试 |
-| <a id="ui-today"></a>今日 | [today.html](../design/today.html) | §3、§4，`view=today` | 过期／今天分组、完成、今日新建继承日期 |
+| <a id="ui-today"></a>今日 | [today.html](../design/today.html) | §3、§4，`view=today` | 过期／今天分组、下方“接下来”未来预览（明天／3天内／7天内／30天内）、完成、今日新建继承日期 |
 | <a id="ui-inbox"></a>收件箱 | [inbox.html](../design/inbox.html) | §4，`view=inbox` | 未完成列表、搜索筛选、排序及分类入口 |
-| <a id="ui-upcoming"></a>即将到期 | [upcoming.html](../design/upcoming.html) | §4，`view=upcoming` | 按未来时间段分组、日期和优先级 |
+| <a id="ui-upcoming"></a>即将到期 | [upcoming.html](../design/upcoming.html) | §4，`view=upcoming` | 按未来时间段分组（明天／3天内／7天内／30天内／更晚，与今日预览同口径）、日期和优先级 |
 | <a id="ui-all"></a>全部任务 | [all.html](../design/all.html) | §4，`view=all` | 已完成／未完成共存、默认排序与自定义顺序 |
 | <a id="ui-completed"></a>已完成 | [completed.html](../design/completed.html) | §4，`view=completed` | 完成日期分组、取消完成、历史记录入口 |
 | <a id="ui-editor"></a>即时编辑 | [editor.html](../design/editor.html) | §5，任务详情 | 三栏上下文、即时正文、完成／重新打开、元数据、格式工具栏、保存反馈、窄屏返回列表 |

@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import AppIcon from "@/components/AppIcon.vue";
 import { PROJECT_VIEWS } from "@/app/views";
+import { todayLocal } from "@/domain/datetime";
 import { UNCATEGORIZED_LABEL } from "@/domain/types";
 import { useClassificationStore } from "@/stores/classification";
 import { useProjectStore } from "@/stores/project";
@@ -57,6 +58,24 @@ function isRouteActive(name: string): boolean {
 }
 
 const accountInitial = computed(() => (session.account?.email ?? "本").slice(0, 1).toUpperCase());
+
+// 今日角标红点语义（对齐移动端底部 Badge）：有过期任务时标红，数字仍为过期+今天。
+const overdueCount = computed(
+  () =>
+    todos.todos.filter(
+      (item) =>
+        item.status === "open" && !item.deletedAt && !!item.dueDate && item.dueDate < todayLocal(),
+    ).length,
+);
+
+function isTodayUrgent(viewId: string): boolean {
+  return viewId === "today" && overdueCount.value > 0;
+}
+
+// 侧栏计数 99 以上封顶（对齐移动端 Badge 口径）。
+function formatCount(value: number): string {
+  return value > 99 ? "99+" : String(value);
+}
 </script>
 
 <template>
@@ -93,7 +112,12 @@ const accountInitial = computed(() => (session.account?.email ?? "本").slice(0,
           @click="emit('navigate')"
         >
           <AppIcon :name="view.icon" />{{ view.title }}
-          <span class="nav-count">{{ todos.counts[view.id as keyof typeof todos.counts] }}</span>
+          <span
+            class="nav-count"
+            :class="{ danger: isTodayUrgent(view.id) }"
+            :title="isTodayUrgent(view.id) ? `有 ${overdueCount} 项已过期` : undefined"
+            >{{ formatCount(todos.counts[view.id as keyof typeof todos.counts]) }}</span
+          >
         </RouterLink>
       </div>
     </nav>

@@ -269,6 +269,16 @@
   color: var(--brand);
 }
 
+/* 今日角标红点：有过期任务时标红（对齐移动端底部 Badge 语义），状态不只依赖颜色，title 另带过期数。 */
+.nav-count.danger {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.nav-link.active .nav-count.danger {
+  color: var(--red);
+}
+
 .nav-child {
   padding-left: 39px;
   font-size: 11px;
@@ -529,6 +539,38 @@
 
 .list-group-title .count {
   color: var(--subtle);
+}
+
+/* 今日页“接下来”预览分区：与核心分组视觉分隔，默认每组 5 条、超长展开。 */
+.preview-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 28px 0 4px;
+  font-size: 11px;
+  color: var(--subtle);
+}
+
+.preview-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.preview-toggle {
+  margin-left: auto;
+  min-height: 32px;
+}
+
+.upcoming-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  min-height: 44px;
+  font-size: 12px;
+  color: var(--brand);
 }
 
 .task-row {
